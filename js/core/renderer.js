@@ -2,19 +2,28 @@
  * HTML to Video – renderer.
  *
  * Plays an HTML file in a headless browser on a virtual clock and captures
- * it frame by frame:
- *   - one PNG sequence for the background (everything that isn't an object)
- *   - one transparent PNG sequence per object (text, image, icon, svg ...)
- * and writes manifest.json describing where each layer starts on the
- * timeline. jsx/host.jsx turns that into a Premiere Pro sequence.
+ * it frame by frame. Works fully offline (see netcache.js).
+ *
+ * Output (described by manifest.json, built into Premiere by jsx/host.jsx):
+ *   - background: PNG sequence of the page without its objects
+ *   - every object (text, image, icon, svg, shape...) as its own layer:
+ *       "motion" layer: the object only moves / scales / rotates / fades ->
+ *                       ONE still picture + editable Premiere keyframes
+ *       "frames" layer: its look changes (text changes, canvas, video...) ->
+ *                       a transparent PNG sequence
+ *   - <audio> files with their start time
  */
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { pathToFileURL } = require('url');
+const { pathToFileURL, fileURLToPath } = require('url');
 const CDP = require('./cdp');
 const chrome = require('./chrome');
+const NetCache = require('./netcache');
+const png = require('./png');
+const motion = require('./motion');
 
 const INJECT = fs.readFileSync(path.join(__dirname, 'inject.js'), 'utf8');
 const TRANSPARENT = { r: 0, g: 0, b: 0, a: 0 };
@@ -31,6 +40,16 @@ function sortLayers(a, b) {
   return (a.z[0] - b.z[0]) || (a.z[1] - b.z[1]) || (a.order - b.order) || (a.id - b.id);
 }
 
+function defaultCacheDir() {
+  if (process.platform === 'win32' && process.env.APPDATA) {
+    return path.join(process.env.APPDATA, 'HTML to Video', 'cache');
+  }
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'HTML to Video', 'cache');
+  }
+  return path.join(os.homedir(), '.cache', 'html-to-video');
+}
+
 class LayerWriter {
   constructor(dir, prefix) {
     this.dir = dir;
@@ -43,10 +62,10 @@ class LayerWriter {
   file(i) {
     return path.join(this.dir, this.prefix + '_' + pad(i) + '.png');
   }
-  frame(frameIndex, png, blank) {
+  frame(frameIndex, img, blank) {
     if (this.startFrame === null) this.startFrame = frameIndex;
     for (; this.pendingBlanks > 0; this.pendingBlanks--) fs.writeFileSync(this.file(this.count++), blank);
-    fs.writeFileSync(this.file(this.count++), png);
+    fs.writeFileSync(this.file(this.count++), img);
   }
   skip() {
     if (this.startFrame !== null) this.pendingBlanks++;
@@ -55,19 +74,31 @@ class LayerWriter {
     // Premiere needs at least 2 numbered stills to import a sequence.
     if (this.count === 1) fs.writeFileSync(this.file(this.count++), blank);
   }
+  // The same picture for `frames` frames. Hard links take no extra disk space.
+  still(img, frames) {
+    const first = this.file(0);
+    fs.writeFileSync(first, img);
+    const n = Math.max(2, frames);
+    for (let i = 1; i < n; i++) {
+      try { fs.linkSync(first, this.file(i)); } catch (e) { fs.copyFileSync(first, this.file(i)); }
+    }
+    this.count = n;
+  }
 }
 
 /**
  * @param {object} o
- *   htmlPath, outDir, width, height, fps,
- *   duration: seconds or 'auto', mode: 'objects' | 'sections' | 'flat',
- *   maxLayers, chromePath, WebSocket, onProgress(info), isCancelled()
+ *   htmlPath, outDir,
+ *   width, height: numbers, or width 'auto' to use the page's own stage size
+ *   fps, duration: seconds or 'auto', mode: 'objects' | 'sections' | 'flat',
+ *   keyframes: true = objects that only move become stills + keyframes,
+ *   maxLayers, chromePath, cacheDir, WebSocket, onProgress(info), isCancelled()
  * @returns {Promise<object>} manifest
  */
 async function render(o) {
   const opts = Object.assign({
     width: 1920, height: 1080, fps: 30, duration: 'auto',
-    mode: 'objects', maxLayers: 60
+    mode: 'objects', maxLayers: 60, keyframes: true
   }, o);
   const progress = opts.onProgress || (() => {});
   const cancelled = opts.isCancelled || (() => false);
@@ -77,9 +108,12 @@ async function render(o) {
   const title = safeName(path.basename(htmlPath).replace(/\.[^.]+$/, ''));
   const outDir = path.resolve(opts.outDir);
   fs.mkdirSync(outDir, { recursive: true });
+  const autoSize = opts.width === 'auto' || opts.height === 'auto';
+  let W = autoSize ? 1920 : Number(opts.width);
+  let H = autoSize ? 1080 : Number(opts.height);
 
   progress({ stage: 'launch', message: 'Starting browser...' });
-  const browser = await chrome.launch(opts);
+  const browser = await chrome.launch({ chromePath: opts.chromePath, width: W, height: H });
   let cdp;
   try {
     cdp = await CDP.connect(browser.wsUrl, opts.WebSocket);
@@ -96,16 +130,32 @@ async function render(o) {
     };
     const setBackground = (color) =>
       send('Emulation.setDefaultBackgroundColorOverride', color ? { color } : {});
-    const shot = async () => {
-      const r = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+    let viewW = W;
+    let viewH = H;
+    const setViewport = (w, h) => {
+      viewW = w;
+      viewH = h;
+      return send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    };
+    // the video frame inside the viewport
+    const stage = { x: 0, y: 0, width: W, height: H };
+    const shot = async (clip) => {
+      const params = { format: 'png', fromSurface: true };
+      if (clip) params.clip = clip;
+      else if (stage.x || stage.y || viewW !== W || viewH !== H) {
+        params.clip = { x: stage.x, y: stage.y, width: W, height: H, scale: 1 };
+      }
+      const r = await send('Page.captureScreenshot', params);
       return Buffer.from(r.data, 'base64');
     };
 
+    const cache = new NetCache(opts.cacheDir || defaultCacheDir(), path.dirname(htmlPath),
+      (msg) => progress({ stage: 'warn', message: msg }));
     await send('Page.enable');
     await send('Runtime.enable');
-    await send('Emulation.setDeviceMetricsOverride', {
-      width: opts.width, height: opts.height, deviceScaleFactor: 1, mobile: false
-    });
+    await send('DOM.enable');
+    await cache.attach(cdp, sessionId);
+    await setViewport(W, H);
     await send('Page.addScriptToEvaluateOnNewDocument', { source: INJECT });
 
     const url = pathToFileURL(htmlPath).href;
@@ -125,33 +175,147 @@ async function render(o) {
     progress({ stage: 'load', message: 'Loading ' + path.basename(htmlPath) + '...' });
     await load();
 
+    // ---- size: the page's own fixed-size stage ----
+    if (autoSize) {
+      const st = await evaluate('__h2v.findStage()');
+      if (st) {
+        W = st.w - (st.w % 2);
+        H = st.h - (st.h % 2);
+        stage.width = W;
+        stage.height = H;
+        await setViewport(W, H);
+        await load();
+        const again = await evaluate('__h2v.findStage()');
+        if (again && Math.abs(again.scale - 1) < 0.01 && (again.x > 0.5 || again.y > 0.5)) {
+          // a stage with a margin around it (not scaled to fit): make room
+          await setViewport(Math.ceil(W + again.x), Math.ceil(H + again.y));
+          await load();
+          const s3 = await evaluate('__h2v.findStage()');
+          if (s3 && Math.abs(s3.scale - 1) < 0.01) {
+            stage.x = s3.x;
+            stage.y = s3.y;
+          } else {
+            await setViewport(W, H);
+            await load();
+          }
+        }
+        progress({ stage: 'info', message: `Stage found: ${W}×${H}` });
+      } else {
+        progress({ stage: 'info', message: 'No fixed-size stage found, using 1920×1080' });
+      }
+    }
+
     // ---- duration ----
     let duration = Number(opts.duration);
+    let needReload = false;
     if (!(duration > 0)) {
       progress({ stage: 'probe', message: 'Measuring animation length...' });
       const declared = await evaluate(`(function () {
-        if (window.H2V_DURATION) return Number(window.H2V_DURATION);
+        function g(n) { try { return (0, eval)(n); } catch (e) { return undefined; } }
+        var v;
+        if ((v = Number(window.H2V_DURATION)) > 0) return v;
         var m = document.querySelector('meta[name="h2v-duration"]');
-        return m ? Number(m.content) : 0;
+        if (m && (v = Number(m.content)) > 0) return v;
+        if ((v = Number(g('DURATION_MS'))) > 0 || (v = Number(g('TOTAL_MS'))) > 0) return v / 1000;
+        if ((v = Number(g('DURATION'))) > 0 || (v = Number(g('TOTAL'))) > 0) return v > 600 ? v / 1000 : v;
+        return 0;
       })()`);
       if (declared > 0) {
         duration = declared;
       } else {
         const p = await evaluate('__h2v.probe(30000, 50)');
-        duration = p.looping ? 10 : Math.max(p.lastActivity + 500, p.minCycle, 1000) / 1000;
+        if (p.looping) duration = p.minCycle > 0 ? p.minCycle / 1000 : 10; // one cycle of a loop
+        else duration = Math.max(p.lastActivity + 1000, p.minCycle, 1000) / 1000;
         duration = Math.min(duration, 60);
+        needReload = true;
       }
-      await load(); // start again from a fresh page at t = 0
     }
     const fps = opts.fps;
     const frames = Math.max(1, Math.round(duration * fps));
+    const configure = () => evaluate(`__h2v.configure(${JSON.stringify({
+      mode: opts.mode, maxLayers: opts.maxLayers, frame: { x: stage.x, y: stage.y, width: W, height: H }
+    })})`);
 
-    await evaluate(`__h2v.configure(${JSON.stringify({ mode: opts.mode, maxLayers: opts.maxLayers })})`);
+    // ---- pass 1: analysis (no pictures) ----
+    // Records, for every object and frame, its on-screen box and how it
+    // looks, to find the objects that can be a still picture + keyframes.
+    const analysis = new Map(); // id -> { name, samples: [] }
+    const useKeys = opts.keyframes && opts.mode !== 'flat';
+    if (useKeys) {
+      if (needReload) await load();
+      needReload = true;
+      await configure();
+      const objectIds = new Map();
+      for (let f = 0; f < frames; f++) {
+        if (cancelled()) throw new Error('Cancelled');
+        await evaluate(`__h2v.setTime(${(f * 1000) / fps}, true)`);
+        const info = await evaluate('__h2v.prepare()');
+        for (const L of info.added) analysis.set(L.id, { name: L.name, samples: [] });
+        const data = await evaluate('__h2v.analyze()');
+        for (const d of data) {
+          if (!objectIds.has(d.id)) {
+            const r = await send('Runtime.evaluate', { expression: `__h2v.layerElement(${d.id})` });
+            objectIds.set(d.id, r.result.objectId);
+          }
+          let m = null;
+          try {
+            const { model } = await send('DOM.getBoxModel', { objectId: objectIds.get(d.id) });
+            m = motion.quadToMatrix(model.border, model.width, model.height);
+          } catch (e) { /* no box */ }
+          analysis.get(d.id).samples.push({ frame: f, m, op: d.op, fp: d.fp, still: d.still });
+        }
+        if (f % 5 === 0) {
+          progress({ stage: 'analyze', frame: f + 1, frames, message: `Reading frame ${f + 1}/${frames}` });
+        }
+      }
+    }
+    const rigid = new Set();
+    for (const [id, a] of analysis) {
+      const why = motion.whyNotRigid(a.samples);
+      if (!why) rigid.add(id);
+      else if (opts.debug) progress({ stage: 'info', message: `${a.name}: picture sequence (${why})` });
+    }
 
-    // ---- capture ----
+    // The object alone, without transform/opacity, as one sharp picture.
+    const captureRest = async (id, samples) => {
+      let maxScale = 1;
+      for (const s of samples) {
+        const d = motion.decompose(s.m);
+        maxScale = Math.max(maxScale, d.sx, d.sy);
+      }
+      const scale = Math.min(4, Math.max(1, Math.ceil(maxScale * 4 - 0.01) / 4));
+      let box = await evaluate(`__h2v.rest(${id})`);
+      // Move the object into an empty corner with a margin around it (an
+      // object as big as the frame, or an inline one, stays where it is).
+      const P = Math.floor(Math.min(256, (viewW - box.w) / 2, (viewH - box.h) / 2));
+      if (P >= 2) box = await evaluate(`__h2v.rest(${id}, ${P}, ${P})`);
+      const M = 256;
+      const x0 = Math.max(0, Math.floor(box.x - M));
+      const y0 = Math.max(0, Math.floor(box.y - M));
+      const area = {
+        x: x0, y: y0, scale: 1,
+        width: Math.min(viewW, Math.ceil(box.x + box.w + M)) - x0,
+        height: Math.min(viewH, Math.ceil(box.y + box.h + M)) - y0
+      };
+      let result = null;
+      const b = area.width > 0 && area.height > 0 ? png.alphaBounds(await shot(area)) : null;
+      // the picture must not touch the edge of the captured area (it would be cut)
+      if (b && b.x > 0 && b.y > 0 && b.x + b.width < area.width && b.y + b.height < area.height) {
+        const ix = area.x + b.x;
+        const iy = area.y + b.y;
+        const img = await shot({ x: ix, y: iy, width: b.width, height: b.height, scale });
+        result = { img, dx: ix - box.x, dy: iy - box.y, cw: b.width, ch: b.height, scale };
+      }
+      await evaluate('__h2v.rest(null)');
+      return result;
+    };
+
+    // ---- pass 2: capture ----
+    if (needReload) await load();
+    await configure();
     const bgName = '00_background';
     const bg = new LayerWriter(path.join(outDir, bgName), bgName);
-    const layers = new Map(); // id -> { meta, writer }
+    const layers = new Map(); // id -> { meta, writer, motion, rest }
     let blank = null;
     const started = Date.now();
 
@@ -163,7 +327,9 @@ async function render(o) {
 
       for (const L of info.added) {
         const name = String(L.id).padStart(2, '0') + '_' + safeName(L.name);
-        layers.set(L.id, { meta: Object.assign({}, L, { name }), writer: null });
+        const a = analysis.get(L.id);
+        const isMotion = rigid.has(L.id) && !!a && a.name === L.name;
+        layers.set(L.id, { meta: Object.assign({}, L, { name }), writer: null, motion: isMotion, rest: null });
       }
 
       if (!blank) {
@@ -186,6 +352,11 @@ async function render(o) {
           continue;
         }
         await evaluate(`__h2v.isolate(${id})`);
+        if (L.motion && !L.rest) {
+          L.rest = await captureRest(id, analysis.get(id).samples);
+          if (!L.rest) L.motion = false; // no clean still possible: use frames
+        }
+        if (L.motion) continue;
         if (!L.writer) L.writer = new LayerWriter(path.join(outDir, L.meta.name), L.meta.name);
         L.writer.frame(f, await shot(), blank);
       }
@@ -205,10 +376,27 @@ async function render(o) {
     bg.finish(blank);
     const out = [];
     for (const L of layers.values()) {
+      if (L.motion && L.rest) {
+        const samples = analysis.get(L.meta.id).samples;
+        const startFrame = samples[0].frame;
+        const endFrame = samples[samples.length - 1].frame;
+        const writer = new LayerWriter(path.join(outDir, L.meta.name), L.meta.name);
+        writer.still(L.rest.img, endFrame - startFrame + 1);
+        out.push(Object.assign({}, L.meta, {
+          kind: 'motion',
+          first: writer.file(0),
+          startFrame,
+          frames: writer.count,
+          imageWidth: Math.round(L.rest.cw * L.rest.scale),
+          imageHeight: Math.round(L.rest.ch * L.rest.scale),
+          keys: motion.buildKeys(samples, startFrame, endFrame, L.rest, stage)
+        }));
+        continue;
+      }
       if (!L.writer) continue; // never visible
       L.writer.finish(blank);
       out.push(Object.assign({}, L.meta, {
-        dir: L.writer.dir,
+        kind: 'frames',
         first: L.writer.file(0),
         startFrame: L.writer.startFrame,
         frames: L.writer.count
@@ -216,25 +404,48 @@ async function render(o) {
     }
     out.sort(sortLayers);
 
+    // ---- sound ----
+    const audio = [];
+    for (const a of await evaluate('__h2v.audioList()')) {
+      let file = null;
+      try {
+        file = a.src.startsWith('file:') ? fileURLToPath(a.src) : cache.findLocal(a.src);
+      } catch (e) { /* ignore */ }
+      if (file && fs.existsSync(file)) audio.push({ file, start: a.start });
+      else progress({ stage: 'warn', message: 'Sound not found on disk: ' + a.src });
+    }
+
     const manifest = {
-      version: 1,
+      version: 2,
       title,
       source: htmlPath,
-      width: opts.width,
-      height: opts.height,
+      width: W,
+      height: H,
       fps,
       frames,
       duration: frames / fps,
       mode: opts.mode,
-      background: { name: bgName, dir: bg.dir, first: bg.file(0), startFrame: 0, frames: bg.count },
-      layers: out.map((L) => ({
-        name: L.name, dir: L.dir, first: L.first, startFrame: L.startFrame, frames: L.frames
-      }))
+      background: { name: bgName, kind: 'frames', first: bg.file(0), startFrame: 0, frames: bg.count },
+      layers: out.map((L) => {
+        const m = { name: L.name, kind: L.kind, first: L.first, startFrame: L.startFrame, frames: L.frames };
+        if (L.kind === 'motion') {
+          m.imageWidth = L.imageWidth;
+          m.imageHeight = L.imageHeight;
+          m.keys = L.keys;
+        }
+        return m;
+      }),
+      audio
     };
     const manifestPath = path.join(outDir, 'manifest.json');
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     manifest.manifestPath = manifestPath;
-    progress({ stage: 'done', message: `Rendered ${frames} frames, ${out.length} object layer(s).` });
+    const nMotion = out.filter((L) => L.kind === 'motion').length;
+    progress({
+      stage: 'done',
+      message: `Rendered ${frames} frames: ${out.length} object layer(s), ${nMotion} with editable keyframes` +
+        (audio.length ? `, ${audio.length} sound(s)` : '') + '.'
+    });
     return manifest;
   } finally {
     if (cdp) {
@@ -245,4 +456,4 @@ async function render(o) {
   }
 }
 
-module.exports = { render, findChrome: chrome.findChrome };
+module.exports = { render, findChrome: chrome.findChrome, defaultCacheDir };

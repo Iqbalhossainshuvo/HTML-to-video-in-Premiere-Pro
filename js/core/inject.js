@@ -51,6 +51,15 @@
     });
   } catch (e) { /* ignore */ }
 
+  // The same moment always looks the same: Math.random gets a fixed seed.
+  var seed = 0x2f6b3a1d;
+  Math.random = function () {
+    seed = (seed + 0x6d2b79f5) | 0;
+    var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
   var timers = {};
   var timerSeq = 1;
   var timerOrder = 1;
@@ -256,6 +265,19 @@
     });
   }
 
+  // SVG <animate>/<animateTransform>/<set> (SMIL)
+  function syncSvg() {
+    var svgs = document.getElementsByTagName('svg');
+    for (var i = 0; i < svgs.length; i++) {
+      var svg = svgs[i];
+      if (svg.ownerSVGElement || !svg.setCurrentTime) continue;
+      try {
+        svg.pauseAnimations();
+        svg.setCurrentTime(now / 1000);
+      } catch (e) { /* ignore */ }
+    }
+  }
+
   async function setTime(t, fast) {
     t = Math.max(t, now);
     await runTimers(t);
@@ -267,6 +289,7 @@
     }
     await Promise.resolve();
     syncAnimations();
+    syncSvg();
     if (!fast) {
       await syncMedia();
       await nextRealFrame();
@@ -572,6 +595,198 @@
     return true;
   }
 
+  /* ------------------------------------------------------------------ */
+  /* Stage detection                                                     */
+  /* ------------------------------------------------------------------ */
+
+  var COMMON = ['1920x1080', '1080x1920', '1080x1080', '1280x720', '720x1280', '3840x2160',
+    '2160x3840', '1080x1350', '1200x628', '1080x1440', '2560x1440', '1440x2560', '1600x900'];
+
+  // Finds the fixed-size "stage" the page draws its video in (often scaled
+  // to fit the window) and returns its real size and position.
+  function findStage() {
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var best = null;
+    var all = document.body ? document.body.getElementsByTagName('*') : [];
+    for (var i = 0; i < all.length && i < 5000; i++) {
+      var el = all[i];
+      if (!(el instanceof HTMLElement) || SKIP[el.localName]) continue;
+      var lw = el.offsetWidth;
+      var lh = el.offsetHeight;
+      if (lw < 200 || lh < 200) continue;
+      if (Math.abs(lw - vw) < 1 && Math.abs(lh - vh) < 1) continue; // just fills the window
+      var r = el.getBoundingClientRect();
+      var sx = r.width / lw;
+      var sy = r.height / lh;
+      var common = COMMON.indexOf(lw + 'x' + lh) >= 0;
+      var scaled = Math.abs(sx - sy) < 0.01 && Math.abs(sx - 1) > 0.01;
+      if (!common && !scaled) continue;
+      var score = (common ? 1e9 : 0) + lw * lh;
+      if (!best || score > best.score) {
+        best = { score: score, w: lw, h: lh, x: r.left, y: r.top, scale: sx };
+      }
+    }
+    return best;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Object analysis (for editable motion keyframes)                     */
+  /* ------------------------------------------------------------------ */
+
+  var FP_PROPS = ['color', 'backgroundColor', 'backgroundImage', 'backgroundPosition', 'backgroundSize',
+    'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor', 'borderTopWidth',
+    'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopLeftRadius',
+    'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius', 'boxShadow', 'filter',
+    'backdropFilter', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing',
+    'wordSpacing', 'lineHeight', 'textShadow', 'textDecorationLine', 'webkitTextStrokeWidth',
+    'webkitTextStrokeColor', 'fill', 'fillOpacity', 'stroke', 'strokeWidth', 'strokeOpacity',
+    'strokeDasharray', 'strokeDashoffset', 'stopColor', 'clipPath', 'maskImage', 'visibility',
+    'display', 'outlineColor', 'outlineWidth', 'outlineStyle', 'objectPosition', 'mixBlendMode',
+    'd', 'cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'width', 'height'];
+  var FP_MOVE = ['transform', 'opacity', 'translate', 'rotate', 'scale'];
+  var PSEUDO_PROPS = ['content', 'transform', 'opacity', 'color', 'backgroundColor', 'width', 'height', 'left', 'top'];
+  var NOT_STILL = { video: 1, canvas: 1, iframe: 1, embed: 1, object: 1, animate: 1,
+    animatetransform: 1, animatemotion: 1, set: 1 };
+
+  function hash(str) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36) + ':' + str.length;
+  }
+
+  function styleBits(cs, props) {
+    var out = '';
+    for (var i = 0; i < props.length; i++) out += cs[props[i]] + '|';
+    return out;
+  }
+
+  // Describes everything about how the object looks, except its own
+  // position/scale/rotation/opacity. If this never changes, the object can
+  // be one still picture moved by keyframes.
+  function fingerprint(L) {
+    var parts = [];
+    var still = true;
+    (function walk(el, isRoot) {
+      if (!isRoot && layerOf.has(el)) return;
+      var name = el.localName.toLowerCase();
+      if (NOT_STILL[name]) still = false;
+      var cs = getComputedStyle(el);
+      var bits = name + '{' + styleBits(cs, FP_PROPS);
+      if (!isRoot) bits += styleBits(cs, FP_MOVE);
+      if (el.offsetWidth !== undefined) bits += el.offsetWidth + 'x' + el.offsetHeight;
+      if (el.currentSrc) bits += el.currentSrc;
+      if (el.namespaceURI === 'http://www.w3.org/2000/svg') {
+        var attrs = ['d', 'points', 'x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'rx', 'ry',
+          'x1', 'y1', 'x2', 'y2', 'transform', 'offset', 'href', 'viewBox'];
+        for (var a = 0; a < attrs.length; a++) bits += el.getAttribute(attrs[a]) + ',';
+      }
+      for (var n = el.firstChild; n; n = n.nextSibling) {
+        if (n.nodeType === 3) bits += '"' + n.nodeValue + '"';
+      }
+      bits += styleBits(getComputedStyle(el, '::before'), PSEUDO_PROPS);
+      bits += styleBits(getComputedStyle(el, '::after'), PSEUDO_PROPS);
+      parts.push(bits + '}');
+      for (var c = el.firstElementChild; c; c = c.nextElementSibling) walk(c, false);
+    })(L.el, true);
+
+    // ancestors: effects that change the look but are not keyframable
+    var r = L.el.getBoundingClientRect();
+    for (var e = L.el.parentElement; e && e !== document.documentElement; e = e.parentElement) {
+      var acs = getComputedStyle(e);
+      parts.push(acs.filter + acs.mixBlendMode + acs.maskImage + acs.clipPath + acs.perspective);
+      if (acs.mixBlendMode !== 'normal' || acs.perspective !== 'none') still = false;
+      if (acs.overflowX !== 'visible' || acs.overflowY !== 'visible' || acs.clipPath !== 'none' ||
+          acs.maskImage !== 'none') {
+        var cr = e.getBoundingClientRect();
+        var fr = cfg.frame || { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+        var coversFrame = cr.left <= fr.x + 1 && cr.top <= fr.y + 1 &&
+          cr.right >= fr.x + fr.width - 1 && cr.bottom >= fr.y + fr.height - 1;
+        // clipping at the edge of the video frame is fine: the frame crops anyway
+        if (!coversFrame && (r.left < cr.left - 1 || r.top < cr.top - 1 || r.right > cr.right + 1 || r.bottom > cr.bottom + 1)) {
+          still = false; // the object is being clipped (a wipe / reveal)
+        }
+      }
+    }
+    var own = getComputedStyle(L.el);
+    if (own.mixBlendMode !== 'normal' || L.el === document.body) still = false;
+    return { fp: hash(parts.join('\n')), still: still };
+  }
+
+  // Per visible object: how it looks (fingerprint) and its total opacity.
+  function analyze() {
+    var out = [];
+    for (var i = 0; i < visibleNow.length; i++) {
+      var L = visibleNow[i];
+      var f = fingerprint(L);
+      out.push({ id: L.id, fp: f.fp, still: f.still, op: effectiveOpacity(L.el) });
+    }
+    return out;
+  }
+
+  function layerElement(id) {
+    var L = layers[id - 1];
+    return L ? L.el : null;
+  }
+
+  // Rest pose: show the object without any transform or opacity (its own
+  // or its parents'), moved to (x, y) of the viewport, so it can be
+  // captured once as a still picture. Uses Web Animations, which never start
+  // CSS transitions and are removed again by rest(null).
+  var restAnims = [];
+  var NEUTRAL = { transform: 'none', opacity: 1, translate: 'none', rotate: 'none', scale: 'none' };
+
+  function overlay(el, extra) {
+    var k = {};
+    for (var p in NEUTRAL) k[p] = NEUTRAL[p];
+    for (var q in extra) k[q] = extra[q];
+    var a = origAnimate.call(el, [k, k], { duration: 1e9, fill: 'both' });
+    origPause.call(a);
+    return a;
+  }
+
+  function rest(id, x, y) {
+    for (var i = 0; i < restAnims.length; i++) restAnims[i].cancel();
+    restAnims = [];
+    if (id === null) return null;
+    var el = layerElement(id);
+    restAnims.push(overlay(el, {}));
+    for (var e = el.parentElement; e && e.nodeType === 1; e = e.parentElement) {
+      // parents must not clip the object once it is moved to the capture spot
+      restAnims.push(overlay(e, { overflow: 'visible', clipPath: 'none', contain: 'none' }));
+    }
+    var r = el.getBoundingClientRect();
+    if (x !== undefined && x !== null) {
+      restAnims[0].cancel();
+      restAnims[0] = overlay(el, { transform: 'translate(' + (x - r.left) + 'px,' + (y - r.top) + 'px)' });
+      r = el.getBoundingClientRect(); // inline elements ignore transforms and stay put
+    }
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  }
+
+  // <audio> that should go on the timeline: data-start="seconds" or autoplay
+  function audioList() {
+    var out = [];
+    var list = document.querySelectorAll('audio');
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      var src = el.currentSrc || el.src || (el.querySelector('source') || {}).src;
+      if (!src) continue;
+      var start = parseFloat(el.getAttribute('data-start'));
+      if (!(start >= 0)) {
+        var st = media.get(el);
+        if (st && st.playing) start = st.birth / 1000;
+        else if (el.autoplay) start = 0;
+        else continue;
+      }
+      out.push({ src: src, start: start, volume: el.muted ? 0 : el.volume });
+    }
+    return out;
+  }
+
   function configure(opts) {
     for (var k in opts) cfg[k] = opts[k];
     ensureStyle();
@@ -584,6 +799,11 @@
     prepare: prepare,
     isolate: isolate,
     restore: clearMarks,
+    findStage: findStage,
+    analyze: analyze,
+    layerElement: layerElement,
+    rest: rest,
+    audioList: audioList,
     now: function () { return now; }
   };
 })();

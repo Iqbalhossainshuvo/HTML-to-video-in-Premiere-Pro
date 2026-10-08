@@ -32,7 +32,27 @@ h1 { font-size: 14px; margin: 0; color: #fff; }
   flex: none; width: 38px; height: 46px; border-radius: 4px; background: #e44d26; color: #fff;
   font-size: 10px; font-weight: 700; display: grid; place-items: center;
 }
-.file-info { min-width: 0; }
+.file-info { min-width: 0; flex: 1; }
+.file.drag { border-color: var(--accent); background: #2a3442; }
+.icon-btn {
+  flex: none; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 4px;
+}
+.icon-btn:hover { color: var(--danger); }
+.seg-label { color: var(--muted); font-size: 11px; margin-bottom: -6px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg button {
+  flex: 1; padding: 6px; background: var(--panel); border: none; color: var(--muted); font: inherit; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.sel { background: #3a3a3a; color: #fff; font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.stat { background: var(--panel); border-radius: 4px; padding: 6px 4px; text-align: center; }
+.stat b { display: block; color: #fff; font-size: 14px; }
+.stat span { color: var(--muted); font-size: 10px; }
+details label.check { display: flex; gap: 6px; align-items: flex-start; line-height: 1.35; }
+details label.check input { width: auto; margin: 2px 0 0; flex: none; }
+.log .warn { color: #e0a43a; }
+.foot { color: var(--muted); font-size: 10px; text-align: center; }
 .file-name { color: #fff; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-path { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 

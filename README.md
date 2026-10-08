@@ -3,7 +3,9 @@
 A lightweight Premiere Pro panel that turns any **HTML file into video, frame by
 frame**, playing it exactly as it plays in a web browser, and puts **every
 object and icon on its own track** so you can edit, move, re-time or delete any
-of them.
+of them. Objects that only move, scale, rotate or fade come in as **one picture
+with real Premiere keyframes** (Position / Scale / Rotation / Opacity), so the
+animation itself stays editable. **Works fully offline.**
 
 ```
 ┌ HTML to Video ──────────┐      Timeline
@@ -25,13 +27,21 @@ of them.
 2. **Convert video**: the page plays in a hidden (headless) Chrome/Edge on a
    *virtual clock* and is captured frame by frame. It never drops or skips a
    frame, even when your computer is slow.
-3. A new sequence opens in Premiere Pro:
+3. A new sequence opens in Premiere Pro (or, with **Build into: Active
+   sequence**, new tracks are added to your open sequence at the playhead):
    - **V1 – Background**: the page without its objects.
    - **V2, V3, …**: one **transparent** track per object (heading, paragraph,
      image, icon, SVG, button, shape…), stacked in the same order the browser
      paints them.
    - Each clip **starts at the frame where its object first appears**, so the
      timeline shows elements arriving one by one.
+   - **Editable keyframes**: an object that only moves / scales / rotates /
+     fades is **one sharp picture** with **Position, Scale, Rotation and
+     Opacity keyframes** in Effect Controls. Change the motion right in
+     Premiere: move a keyframe, change the easing, add a bounce.
+   - Objects whose look changes (typing text, colour changes, canvas, video)
+     come in as transparent picture sequences instead.
+   - `<audio>` files go on **audio tracks** at their start time.
 
 Nothing is cut or removed: stacking all the tracks gives back the original page
 pixel for pixel. Anything that isn't its own object stays in the background track.
@@ -44,10 +54,22 @@ pixel for pixel. Anything that isn't its own object stays in the background trac
 | Web Animations API (`element.animate`) | ✅ |
 | JavaScript animation (`requestAnimationFrame`, GSAP, anime.js, Lottie…) | ✅ |
 | `setTimeout` / `setInterval`, `Date`, `performance.now()` | ✅ (virtual time) |
+| SVG `<animate>` / `<animateTransform>` (SMIL) | ✅ |
+| `Math.random()` | ✅ (fixed seed, same result every time) |
 | `<video>` elements | ✅ (seeked frame by frame) |
 | `<canvas>` / WebGL | ✅ (as one object) |
 | Web fonts, icon fonts (Font Awesome, Material Icons, Bootstrap Icons…), inline SVG | ✅ |
-| Audio | ❌ not exported. Add your soundtrack in Premiere |
+| `<audio src="…" data-start="1.5">` | ✅ audio track clip at 1.5 s |
+| Sound made only in JavaScript (Web Audio, `new Audio()`) | ❌ use an `<audio>` tag |
+
+### Works offline
+
+No internet is needed. Every http(s) file the page asks for (a library from a
+CDN, a Google Font, a picture) is looked up first in the panel's **cache**, then
+as a **file with the same name next to your HTML** (or in `assets/`, `libs/`,
+`js/`, `css/`, `fonts/`). Only then does it try the internet. Anything
+downloaded once is cached, so the next conversion works offline. Files that
+could not be loaded are listed in the panel's log in orange.
 
 ## Requirements
 
@@ -103,16 +125,23 @@ The PNG frames are saved in `Documents/HTML to Video/<file>_<date>/`.
 
 | Setting | Default | Notes |
 |---|---|---|
-| Resolution | 1920 × 1080 | Presets for HD, 4K, vertical 9:16, square, or custom |
+| Resolution | Auto | **Auto** finds the page's own fixed-size stage (e.g. a 1920×1080 `<div>` scaled to fit the window) and uses its real size. Presets for HD, 4K, vertical 9:16, square, or custom |
 | Frame rate | 30 | 24, 25, 30, 50, 60 |
-| Duration | `auto` | `auto` plays the page until its animations stop (max 60 s; looping pages get 10 s). Or type seconds, e.g. `8` |
+| Duration | `auto` | `auto` reads `const DURATION = 8` (or `DURATION_MS`, `TOTAL`, `TOTAL_MS`) from the page, else plays it until nothing changes (+1 s; a loop: one cycle; max 60 s). Or type seconds, e.g. `8` |
+| Editable keyframes | on | Objects that only move / scale / rotate / fade become one picture + keyframes. Off = every object is a picture sequence |
 | Layers | Every object & icon | **Top-level sections** gives fewer, bigger tracks; **Single flat video** gives one track |
 | Max object tracks | 60 | Objects beyond this stay in the background track |
 | Browser | auto-detect | Path to `chrome.exe` / `msedge.exe` / Chrome app if not found automatically |
 | Output folder | Documents/HTML to Video | Where PNG frames are written |
 
-**Tip for HTML authors:** you can set the video length inside the page:
-`<meta name="h2v-duration" content="6">` or `window.H2V_DURATION = 6`.
+## Making HTML for this panel (with Claude)
+
+`skill/html-to-video.zip` is a Claude skill that teaches Claude how to write HTML
+animations that convert cleanly (fixed stage, `DURATION`, transform/opacity
+motion for keyframes, local assets for offline use, `<audio data-start>`).
+Upload it in Claude (Settings → Capabilities → Skills), then ask e.g.
+*"Make a 10-second logo reveal for Premiere"*. The details of what converts and
+how are in `skill/html-to-video/references/convert.md`.
 
 ## How it works
 
@@ -120,8 +149,11 @@ The PNG frames are saved in `Documents/HTML to Video/<file>_<date>/`.
 index.html + js/main.js      Panel UI (CEP, runs inside Premiere)
 js/core/chrome.js            Finds and starts headless Chrome / Edge
 js/core/cdp.js               Tiny Chrome DevTools Protocol client (no dependencies)
-js/core/inject.js            Runs inside the page: virtual clock + object detection/isolation
-js/core/renderer.js          Frame loop: background + one transparent PNG per visible object
+js/core/inject.js            Runs inside the page: virtual clock, objects, stage, analysis
+js/core/renderer.js          Analysis pass + capture pass: background, objects, stills, keyframes
+js/core/motion.js            On-screen box per frame -> Position/Scale/Rotation/Opacity keyframes
+js/core/netcache.js          Offline cache / local files for http(s) requests
+js/core/png.js               Tiny PNG reader (crops the still pictures)
 jsx/host.jsx                 ExtendScript: import PNG sequences, build sequence and tracks
 CSXS/manifest.xml            Extension manifest
 tools/render-cli.js          Same renderer from the command line (for testing)
@@ -140,6 +172,12 @@ examples/demo.html           Demo page
   object hidden (background), then each visible object alone on a transparent
   background, using `visibility` only. Layout, transforms, parent opacity and
   clipping are untouched, so every layer lines up exactly.
+- **Keyframes**: a first, fast pass plays the page without taking pictures
+  and records each object's on-screen corners and opacity on every frame,
+  plus a fingerprint of how it looks. When only the position, scale, rotation
+  or opacity changes, the object is captured once at rest and its motion is
+  converted to Premiere keyframes, keeping only the keyframes needed to
+  reproduce it (within ¼ pixel).
 
 ## Command line (optional)
 
@@ -147,7 +185,8 @@ You can render without Premiere (Node.js 22+):
 
 ```bash
 node tools/render-cli.js examples/demo.html out/demo --fps 30 --width 1920 --height 1080
-# options: --duration 5  --mode objects|sections|flat  --max-layers 60  --chrome "<path>"
+# options: --width auto  --duration 5  --mode objects|sections|flat  --max-layers 60
+#          --keyframes off  --chrome "<path>"  --debug 1 (says why an object is not keyframed)
 ```
 
 ## Troubleshooting
@@ -159,6 +198,11 @@ node tools/render-cli.js examples/demo.html out/demo --fps 30 --width 1920 --hei
 - **Debugging**: with the panel open, visit `http://localhost:8098` in Chrome
   to open DevTools for the panel.
 - **Too many tracks**: use **Top-level sections** or lower **Max object tracks**.
+- **Keyframed pictures look too big or small**: in Premiere, *Preferences → Media
+  → Default Media Scaling* must be **None** (not *Scale to frame size*).
+- **A font or library is missing offline**: put the file next to the HTML (or in
+  `assets/`) with the same file name as in its URL, or convert once with
+  internet so it is cached.
 
 ## License
 

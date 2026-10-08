@@ -18,13 +18,28 @@
     <div class="file-icon">HTML</div>
     <div class="file-info">
       <div class="file-name" id="fileName">No file selected</div>
-      <div class="file-path" id="filePath">Upload an .html file to begin</div>
+      <div class="file-path" id="filePath">Upload or drop an .html file here</div>
     </div>
+    <button id="clearBtn" class="icon-btn hidden" title="Remove this file from the panel">✕</button>
   </section>
 
   <button id="uploadBtn" class="btn">Upload your file</button>
+
+  <div class="seg-label">Build into</div>
+  <div class="seg" id="target">
+    <button data-value="new" class="sel">New sequence</button>
+    <button data-value="active">Active sequence</button>
+  </div>
+
   <button id="convertBtn" class="btn primary" disabled>Convert video</button>
   <button id="cancelBtn" class="btn danger hidden">Cancel</button>
+
+  <div class="stats hidden" id="stats">
+    <div class="stat"><b id="statFrames">0</b><span>frames</span></div>
+    <div class="stat"><b id="statObjects">0</b><span>objects</span></div>
+    <div class="stat"><b id="statKeys">0</b><span>keyframed</span></div>
+    <div class="stat"><b id="statLength">0s</b><span>length</span></div>
+  </div>
 
   <div class="progress hidden" id="progressBox">
     <div class="bar"><div class="fill" id="progressFill"></div></div>
@@ -35,6 +50,7 @@
     <summary>Settings</summary>
     <label>Resolution
       <select id="resolution">
+        <option value="auto">Auto (the page's own stage size)</option>
         <option value="1920x1080">1920 × 1080 (Full HD)</option>
         <option value="1280x720">1280 × 720 (HD)</option>
         <option value="3840x2160">3840 × 2160 (4K)</option>
@@ -65,6 +81,9 @@
         <option value="flat">Single flat video</option>
       </select>
     </label>
+    <label class="check"><input type="checkbox" id="keyframes" checked>
+      Editable keyframes: objects that only move, scale, rotate or fade become one picture
+      with Position / Scale / Rotation / Opacity keyframes</label>
     <label>Max object tracks
       <input type="number" id="maxLayers" value="60" min="1" max="200">
     </label>
@@ -77,6 +96,7 @@
   </details>
 
   <div class="log" id="log"></div>
+  <div class="foot">Works offline · CDN files are cached after first use</div>
   <button id="openFolderBtn" class="btn link hidden">Open render folder</button>
 
   <script src="js/main.js"></script>

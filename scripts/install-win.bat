@@ -6,7 +6,7 @@ set "DEST=%APPDATA%\Adobe\CEP\extensions\HTMLtoVideo"
 
 echo Installing to: %DEST%
 if not exist "%DEST%" mkdir "%DEST%"
-robocopy "%SRC%" "%DEST%" /MIR /XD .git scripts tools /NFL /NDL /NJH /NJS >nul
+robocopy "%SRC%" "%DEST%" /MIR /XD .git scripts tools skill /NFL /NDL /NJH /NJS >nul
 
 REM Allow unsigned extensions (needed for panels installed from source)
 for %%v in (10 11 12 13 14) do (

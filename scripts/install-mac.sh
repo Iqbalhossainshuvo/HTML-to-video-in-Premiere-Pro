@@ -6,7 +6,7 @@ DEST="$HOME/Library/Application Support/Adobe/CEP/extensions/HTMLtoVideo"
 
 echo "Installing to: $DEST"
 mkdir -p "$DEST"
-rsync -a --delete --exclude ".git" --exclude "scripts" --exclude "tools" "$SRC/" "$DEST/"
+rsync -a --delete --exclude ".git" --exclude "scripts" --exclude "tools" --exclude "skill" "$SRC/" "$DEST/"
 
 # Allow unsigned extensions (needed for panels installed from source)
 for v in 10 11 12 13 14; do
