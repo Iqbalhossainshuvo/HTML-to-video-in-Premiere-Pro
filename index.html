@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HTML to Video</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <div class="logo">&lt;/&gt;</div>
+    <div>
+      <h1>HTML to Video</h1>
+      <p class="tag">Every object on its own track</p>
+    </div>
+  </header>
+
+  <section class="file" id="fileCard">
+    <div class="file-icon">HTML</div>
+    <div class="file-info">
+      <div class="file-name" id="fileName">No file selected</div>
+      <div class="file-path" id="filePath">Upload an .html file to begin</div>
+    </div>
+  </section>
+
+  <button id="uploadBtn" class="btn">Upload your file</button>
+  <button id="convertBtn" class="btn primary" disabled>Convert video</button>
+  <button id="cancelBtn" class="btn danger hidden">Cancel</button>
+
+  <div class="progress hidden" id="progressBox">
+    <div class="bar"><div class="fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText"></div>
+  </div>
+
+  <details id="settings">
+    <summary>Settings</summary>
+    <label>Resolution
+      <select id="resolution">
+        <option value="1920x1080">1920 × 1080 (Full HD)</option>
+        <option value="1280x720">1280 × 720 (HD)</option>
+        <option value="3840x2160">3840 × 2160 (4K)</option>
+        <option value="1080x1920">1080 × 1920 (Vertical)</option>
+        <option value="1080x1080">1080 × 1080 (Square)</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </label>
+    <div class="row hidden" id="customSize">
+      <label>Width <input type="number" id="width" value="1920" min="16" max="7680"></label>
+      <label>Height <input type="number" id="height" value="1080" min="16" max="4320"></label>
+    </div>
+    <div class="row">
+      <label>Frame rate
+        <select id="fps">
+          <option>24</option><option>25</option><option selected>30</option>
+          <option>50</option><option>60</option>
+        </select>
+      </label>
+      <label>Duration (s)
+        <input type="text" id="duration" value="auto" title="'auto' measures the page's animations">
+      </label>
+    </div>
+    <label>Layers
+      <select id="mode">
+        <option value="objects">Every object &amp; icon (recommended)</option>
+        <option value="sections">Top-level sections only</option>
+        <option value="flat">Single flat video</option>
+      </select>
+    </label>
+    <label>Max object tracks
+      <input type="number" id="maxLayers" value="60" min="1" max="200">
+    </label>
+    <label>Browser (optional)
+      <input type="text" id="chromePath" placeholder="Auto-detect Chrome / Edge">
+    </label>
+    <label>Output folder (optional)
+      <input type="text" id="outRoot" placeholder="Documents/HTML to Video">
+    </label>
+  </details>
+
+  <div class="log" id="log"></div>
+  <button id="openFolderBtn" class="btn link hidden">Open render folder</button>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
