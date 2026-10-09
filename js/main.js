@@ -24,6 +24,11 @@
   }
   var renderer = nodeRequire(path.join(extensionRoot(), 'js', 'core', 'renderer.js'));
 
+  // Premiere Pro (PPRO) or After Effects (AEFT)
+  var hostApp = 'PPRO';
+  try { hostApp = JSON.parse(window.__adobe_cep__.getHostEnvironment()).appName || 'PPRO'; } catch (e) { /* PPRO */ }
+  var isAE = hostApp === 'AEFT';
+
   function evalScript(script) {
     return new Promise(function (resolve) {
       window.__adobe_cep__.evalScript(script, resolve);
@@ -267,9 +272,9 @@
     state.lastOut = opts.outDir;
     renderer.render(opts).then(function (manifest) {
       showStats(manifest);
-      setProgress(0.93, 'Building in Premiere Pro…');
-      log('Importing into Premiere Pro…');
-      return evalScript('h2v_build(' + JSON.stringify(manifest.manifestPath) + ',' +
+      setProgress(0.93, 'Building in ' + (isAE ? 'After Effects' : 'Premiere Pro') + '…');
+      log('Importing into ' + (isAE ? 'After Effects' : 'Premiere Pro') + '…');
+      return evalScript((isAE ? 'h2vAE_build(' : 'h2v_build(') + JSON.stringify(manifest.manifestPath) + ',' +
         JSON.stringify(state.target) + ')');
     }).then(function (result) {
       result = String(result || '');
@@ -277,7 +282,7 @@
         setProgress(1, 'Done');
         log(result.slice(3), 'ok');
       } else {
-        throw new Error(result.replace(/^ERROR\|/, '') || 'Premiere Pro did not respond.');
+        throw new Error(result.replace(/^ERROR\|/, '') || (isAE ? 'After Effects' : 'Premiere Pro') + ' did not respond.');
       }
     }).catch(function (e) {
       setProgress(0, '');
@@ -299,6 +304,10 @@
     childProcess.spawn(cmd, [state.lastOut], { detached: true, stdio: 'ignore' }).unref();
   });
 
+  if (isAE) {
+    ui.target.children[0].textContent = 'New composition';
+    ui.target.children[1].textContent = 'Active composition';
+  }
   loadSettings();
   var browser = renderer.findChrome(ui.chromePath.value.trim() || undefined);
   log(browser ? 'Browser: ' + browser : 'No Chrome/Edge found – set "Browser" in Settings.', browser ? null : 'err');

@@ -1,15 +1,17 @@
 ---
 name: html-to-video
-description: Make HTML motion videos (promos, explainers, product demos, kinetic type, logo reveals, lower thirds, UI animations, charts, social reels) that the "HTML to Video" Premiere Pro panel turns into an editable Premiere Pro sequence, with every object on its own track and its movement as Premiere keyframes. Use it when the user says "for Premiere", "HTML to Video", "make this editable in Premiere Pro", "send this animation to Premiere", or asks for an HTML / CSS / SVG / GSAP / canvas animation they want to edit in Premiere Pro. Also use it when they have an HTML animation and ask whether it will convert well.
+description: Make HTML motion videos (promos, explainers, product demos, kinetic type, logo reveals, lower thirds, UI animations, charts, social reels) for "HTML to Video", which renders them to MP4 (HTMLtoVideo.exe desktop app) or turns them into an editable Premiere Pro sequence / After Effects composition, with every object on its own track/layer and its movement as keyframes. Use it when the user says "for Premiere", "for After Effects", "HTML to Video", "make this editable in Premiere/AE", "render this HTML to MP4", or asks for an HTML / CSS / SVG / GSAP / canvas animation they want as a video or to edit in Premiere Pro or After Effects. Also use it when they have an HTML animation and ask whether it will convert well.
 ---
 
-# HTML to Video: HTML motion video → editable Premiere Pro sequence
+# HTML to Video: HTML motion video → MP4, or editable Premiere Pro / After Effects
 
 You write the animation the way you normally would (CSS animations,
 transitions, Web Animations, GSAP, anime.js, `requestAnimationFrame`, SVG,
-canvas, video clips). The user opens the HTML file in the **HTML to Video**
-panel in Premiere Pro. The panel plays the page frame by frame on its own
-clock, offline, and builds a sequence:
+canvas, video clips). The user either renders it to MP4 with the
+**HTMLtoVideo.exe** desktop app (built-in player, ⬇ save to a folder), or opens
+it in the **HTML to Video** panel in Premiere Pro or After Effects. Both play the
+page frame by frame on their own clock, offline. The panel builds a sequence
+(Premiere) or composition (After Effects):
 
 - **V1**: the background (everything that is not an object)
 - **one track per object** (heading, paragraph, image, icon, SVG, shape,
@@ -70,9 +72,10 @@ picture sequences. See `references/convert.md`.
 1. Save `<Name>.html` and its `assets/` folder (one folder per video).
 2. Tell the user, with the **full path of the HTML file**:
    - preview it: double-click the HTML (opens in Chrome or Edge);
-   - convert it: Premiere Pro → **Window → Extensions → HTML to Video** →
-     **Upload your file** (or drag the HTML onto the panel), choose
-     **New sequence** or **Active sequence**, click **Convert video**;
+   - MP4 only: open it in **HTMLtoVideo.exe** → **Render video** → ⬇ to save;
+   - to edit: Premiere Pro or After Effects → **Window → Extensions → HTML to
+     Video** → **Upload your file** (or drag the HTML onto the panel), choose
+     **New** or **Active** sequence/composition, click **Convert video**;
    - it needs Chrome or Edge installed, no internet (except the first use
      of CDN files that are not in `assets/`);
    - which parts (if any) will be picture sequences.

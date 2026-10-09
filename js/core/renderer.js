@@ -24,8 +24,10 @@ const chrome = require('./chrome');
 const NetCache = require('./netcache');
 const png = require('./png');
 const motion = require('./motion');
+const assets = require('./assets');
+const Mp4Encoder = require('./encoder');
 
-const INJECT = fs.readFileSync(path.join(__dirname, 'inject.js'), 'utf8');
+const INJECT = assets.text('js/core/inject.js');
 const TRANSPARENT = { r: 0, g: 0, b: 0, a: 0 };
 
 function pad(n) {
@@ -93,7 +95,8 @@ class LayerWriter {
  *   fps, duration: seconds or 'auto', mode: 'objects' | 'sections' | 'flat',
  *   keyframes: true = objects that only move become stills + keyframes,
  *   maxLayers, chromePath, cacheDir, WebSocket, onProgress(info), isCancelled()
- * @returns {Promise<object>} manifest
+ *   video: path of an .mp4 to write instead of layers (quality: medium|high|max)
+ * @returns {Promise<object>} manifest (or { video, ... } when `video` is set)
  */
 async function render(o) {
   const opts = Object.assign({
@@ -106,11 +109,19 @@ async function render(o) {
   if (!fs.existsSync(htmlPath)) throw new Error('File not found: ' + htmlPath);
 
   const title = safeName(path.basename(htmlPath).replace(/\.[^.]+$/, ''));
-  const outDir = path.resolve(opts.outDir);
-  fs.mkdirSync(outDir, { recursive: true });
+  const videoOut = opts.video ? path.resolve(opts.video) : null;
+  const outDir = videoOut ? null : path.resolve(opts.outDir);
+  if (outDir) fs.mkdirSync(outDir, { recursive: true });
   const autoSize = opts.width === 'auto' || opts.height === 'auto';
   let W = autoSize ? 1920 : Number(opts.width);
   let H = autoSize ? 1080 : Number(opts.height);
+  if (videoOut) {
+    // video encoders need even sizes; layers are not needed for a plain video
+    W -= W % 2;
+    H -= H % 2;
+    opts.mode = 'flat';
+    opts.keyframes = false;
+  }
 
   progress({ stage: 'launch', message: 'Starting browser...' });
   const browser = await chrome.launch({ chromePath: opts.chromePath, width: W, height: H });
@@ -310,9 +321,55 @@ async function render(o) {
       return result;
     };
 
+    const resolveAudio = (list) => {
+      const found = [];
+      for (const a of list) {
+        let file = null;
+        try {
+          file = a.src.startsWith('file:') ? fileURLToPath(a.src) : cache.findLocal(a.src);
+        } catch (e) { /* ignore */ }
+        if (file && fs.existsSync(file)) found.push({ file, start: a.start, volume: a.volume });
+        else progress({ stage: 'warn', message: 'Sound not found on disk: ' + a.src });
+      }
+      return found;
+    };
+
     // ---- pass 2: capture ----
     if (needReload) await load();
     await configure();
+
+    if (videoOut) {
+      // Plain MP4: every frame goes straight into the browser's video encoder.
+      let enc = null;
+      const started = Date.now();
+      try {
+        for (let f = 0; f < frames; f++) {
+          if (cancelled()) throw new Error('Cancelled');
+          await evaluate(`__h2v.setTime(${(f * 1000) / fps})`);
+          if (!enc) {
+            const sound = resolveAudio(await evaluate('__h2v.audioList()'));
+            enc = await Mp4Encoder.open(cdp, {
+              outPath: videoOut, width: W, height: H, fps, frames, quality: opts.quality, audio: sound
+            });
+            progress({ stage: 'info', message: 'Encoding ' + enc.codecs.video + (enc.codecs.audio ? ' + ' + enc.codecs.audio : '') });
+          }
+          await enc.addFrame(f, await shot());
+          const elapsed = (Date.now() - started) / 1000;
+          progress({
+            stage: 'render', frame: f + 1, frames,
+            eta: Math.round((elapsed / (f + 1)) * (frames - f - 1)),
+            message: `Frame ${f + 1}/${frames}`
+          });
+        }
+        await enc.finish();
+      } catch (e) {
+        if (enc) enc.close();
+        try { fs.unlinkSync(videoOut); } catch (e2) { /* ignore */ }
+        throw e;
+      }
+      progress({ stage: 'done', message: `Video ready: ${frames} frames, ${W}×${H} @ ${fps} fps.` });
+      return { video: videoOut, title, width: W, height: H, fps, frames, duration: frames / fps, codecs: enc.codecs };
+    }
     const bgName = '00_background';
     const bg = new LayerWriter(path.join(outDir, bgName), bgName);
     const layers = new Map(); // id -> { meta, writer, motion, rest }
@@ -405,15 +462,7 @@ async function render(o) {
     out.sort(sortLayers);
 
     // ---- sound ----
-    const audio = [];
-    for (const a of await evaluate('__h2v.audioList()')) {
-      let file = null;
-      try {
-        file = a.src.startsWith('file:') ? fileURLToPath(a.src) : cache.findLocal(a.src);
-      } catch (e) { /* ignore */ }
-      if (file && fs.existsSync(file)) audio.push({ file, start: a.start });
-      else progress({ stage: 'warn', message: 'Sound not found on disk: ' + a.src });
-    }
+    const audio = resolveAudio(await evaluate('__h2v.audioList()'));
 
     const manifest = {
       version: 2,

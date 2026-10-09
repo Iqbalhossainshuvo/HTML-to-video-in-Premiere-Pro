@@ -1,5 +1,6 @@
-out/
-node_modules/
+*.zxp
 .DS_Store
 Thumbs.db
-*.zxp
+dist/
+node_modules/
+out/

@@ -253,3 +253,186 @@ function h2v_build(manifestPath, target) {
         return 'ERROR|' + err.toString() + (err.line ? ' (line ' + err.line + ')' : '');
     }
 }
+
+/* ================================================================== */
+/* After Effects                                                       */
+/* ================================================================== */
+
+/*
+ * h2vAE_build(manifestPath, target): the same result as a composition.
+ * Background layer at the bottom, one layer per object above it, motion as
+ * Position / Scale / Rotation / Opacity keyframes, sounds as audio layers.
+ * target: 'new' = new composition, 'active' = into the open composition at
+ * the current time.
+ */
+
+// value of keys [[frame, v]] at a frame (linear, held at the ends)
+function h2vAE_at(keys, f) {
+    if (!keys || !keys.length) return null;
+    if (f <= keys[0][0]) return keys[0][1];
+    for (var i = 1; i < keys.length; i++) {
+        if (f <= keys[i][0]) {
+            var a = keys[i - 1];
+            var b = keys[i];
+            return a[1] + (b[1] - a[1]) * (f - a[0]) / (b[0] - a[0]);
+        }
+    }
+    return keys[keys.length - 1][1];
+}
+
+function h2vAE_isConstant(keys) {
+    for (var i = 1; i < keys.length; i++) {
+        for (var k = 1; k < keys[0].length; k++) {
+            if (Math.abs(keys[i][k] - keys[0][k]) > 1e-6) return false;
+        }
+    }
+    return true;
+}
+
+function h2vAE_setKeys(prop, keys, value, layerStart, fps, spatial) {
+    if (!prop || !keys || !keys.length) return;
+    if (h2vAE_isConstant(keys)) {
+        prop.setValue(value(keys[0]));
+        return;
+    }
+    var times = [];
+    var values = [];
+    for (var i = 0; i < keys.length; i++) {
+        times.push(layerStart + keys[i][0] / fps);
+        values.push(value(keys[i]));
+    }
+    prop.setValuesAtTimes(times, values);
+    for (var j = 1; j <= prop.numKeys; j++) {
+        prop.setInterpolationTypeAtKey(j, KeyframeInterpolationType.LINEAR, KeyframeInterpolationType.LINEAR);
+        if (spatial) {
+            try {
+                prop.setSpatialAutoBezierAtKey(j, false);
+                prop.setSpatialContinuousAtKey(j, false);
+                prop.setSpatialTangentsAtKey(j, [0, 0, 0], [0, 0, 0]);
+            } catch (e) {
+                try { prop.setSpatialTangentsAtKey(j, [0, 0], [0, 0]); } catch (e2) {}
+            }
+        }
+    }
+}
+
+function h2vAE_applyMotion(layer, L, m, dx, dy) {
+    var tr = layer.property('ADBE Transform Group');
+    var k = L.keys;
+    var fps = m.fps;
+    var start = layer.startTime;
+    h2vAE_setKeys(tr.property('ADBE Position'), k.position, function (p) {
+        return [p[1] * m.width + dx, p[2] * m.height + dy];
+    }, start, fps, true);
+
+    // AE scale is [width %, height %]: merge both channels on one set of keys
+    var frames = {};
+    var list = [];
+    var addFrames = function (keys) {
+        if (!keys) return;
+        for (var i = 0; i < keys.length; i++) {
+            if (!frames[keys[i][0]]) { frames[keys[i][0]] = true; list.push(keys[i][0]); }
+        }
+    };
+    addFrames(k.scale);
+    addFrames(k.scaleWidth);
+    list.sort(function (a, b) { return a - b; });
+    var scaleKeys = [];
+    for (var s = 0; s < list.length; s++) {
+        var h = h2vAE_at(k.scale, list[s]);
+        var w = k.uniform ? h : h2vAE_at(k.scaleWidth, list[s]);
+        scaleKeys.push([list[s], w, h]);
+    }
+    h2vAE_setKeys(tr.property('ADBE Scale'), scaleKeys, function (p) { return [p[1], p[2]]; }, start, fps, false);
+    h2vAE_setKeys(tr.property('ADBE Rotate Z'), k.rotation, function (p) { return p[1]; }, start, fps, false);
+    h2vAE_setKeys(tr.property('ADBE Opacity'), k.opacity, function (p) { return p[1]; }, start, fps, false);
+}
+
+function h2vAE_import(file, sequence, name, parent, fps) {
+    var io = new ImportOptions(new File(file));
+    if (sequence) {
+        io.sequence = true;
+        io.forceAlphabetical = false;
+    }
+    var item = app.project.importFile(io);
+    try { item.name = name; } catch (e1) {}
+    try { item.parentFolder = parent; } catch (e2) {}
+    if (sequence && fps) {
+        try { item.mainSource.conformFrameRate = fps; } catch (e3) {}
+    }
+    return item;
+}
+
+function h2vAE_build(manifestPath, target) {
+    var undo = false;
+    try {
+        var m = h2v_readManifest(manifestPath);
+        if (!app.project) app.newProject();
+        var proj = app.project;
+        var fps = m.fps;
+        var duration = m.frames / fps;
+        app.beginUndoGroup('HTML to Video');
+        undo = true;
+
+        var folder = proj.items.addFolder(m.title + ' (HTML to Video)');
+        var layersFolder = proj.items.addFolder('Object layers');
+        layersFolder.parentFolder = folder;
+
+        var comp;
+        var offset = 0;
+        var active = proj.activeItem;
+        var useActive = target === 'active' && active && (active instanceof CompItem);
+        if (useActive) {
+            comp = active;
+            offset = comp.time;
+            if (comp.duration < offset + duration) comp.duration = offset + duration;
+        } else {
+            comp = proj.items.addComp(m.title, m.width, m.height, 1, duration, fps);
+            comp.parentFolder = folder;
+        }
+        var dx = (comp.width - m.width) / 2;
+        var dy = (comp.height - m.height) / 2;
+
+        // background first, then each object above the previous one
+        var bgItem = h2vAE_import(m.background.first, true, m.title + ' - background', folder, fps);
+        var bg = comp.layers.add(bgItem);
+        bg.name = 'Background';
+        bg.startTime = offset;
+        if (dx || dy) bg.property('ADBE Transform Group').property('ADBE Position').setValue([comp.width / 2, comp.height / 2]);
+
+        var keyed = 0;
+        for (var i = 0; i < m.layers.length; i++) {
+            var L = m.layers[i];
+            var motion = L.kind === 'motion';
+            var item = h2vAE_import(L.first, !motion, L.name, layersFolder, fps);
+            var layer = comp.layers.add(item);
+            layer.name = L.name;
+            layer.startTime = offset + L.startFrame / fps;
+            if (motion) {
+                layer.outPoint = layer.startTime + L.frames / fps;
+                try {
+                    h2vAE_applyMotion(layer, L, m, dx, dy);
+                    keyed++;
+                } catch (e) {}
+            } else if (dx || dy) {
+                layer.property('ADBE Transform Group').property('ADBE Position').setValue([comp.width / 2, comp.height / 2]);
+            }
+        }
+
+        for (var a = 0; a < m.audio.length; a++) {
+            var sound = h2vAE_import(m.audio[a].file, false, new File(m.audio[a].file).name, folder, 0);
+            var al = comp.layers.add(sound);
+            al.startTime = offset + m.audio[a].start;
+        }
+
+        app.endUndoGroup();
+        undo = false;
+        try { comp.openInViewer(); } catch (e4) {}
+        return 'OK|' + (useActive ? 'Added to "' + comp.name + '"' : 'Composition "' + comp.name + '" created') +
+            ': background + ' + m.layers.length + ' object layer(s), ' + keyed + ' with editable keyframes' +
+            (m.audio.length ? ', ' + m.audio.length + ' sound(s)' : '') + '. ' + m.frames + ' frames @ ' + fps + ' fps.';
+    } catch (err) {
+        if (undo) app.endUndoGroup();
+        return 'ERROR|' + err.toString() + (err.line ? ' (line ' + err.line + ')' : '');
+    }
+}

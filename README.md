@@ -1,11 +1,57 @@
-# HTML to Video for Adobe Premiere Pro
+# HTML to Video
 
-A lightweight Premiere Pro panel that turns any **HTML file into video, frame by
-frame**, playing it exactly as it plays in a web browser, and puts **every
-object and icon on its own track** so you can edit, move, re-time or delete any
-of them. Objects that only move, scale, rotate or fade come in as **one picture
-with real Premiere keyframes** (Position / Scale / Rotation / Opacity), so the
-animation itself stays editable. **Works fully offline.**
+> বাংলা নির্দেশিকা: [README.bn.md](README.bn.md)
+
+Turn any **HTML animation into video, frame by frame**, exactly as it plays in a
+web browser. **Works fully offline.** Two ways to use it:
+
+| | For whom | What you get |
+|---|---|---|
+| **[HTMLtoVideo.exe](#desktop-app-htmltovideoexe)**: desktop app | You just want the video | Open an HTML file, **Render video**, watch it in the built-in player, click **⬇** to save the **MP4** to a folder |
+| **[Premiere Pro / After Effects plugin](#premiere-pro--after-effects-plugin)** | You want to edit it | **Every object and icon on its own track/layer**, movement as real **Position / Scale / Rotation / Opacity keyframes** |
+
+Both use the same rendering engine, and both need only Google Chrome or Microsoft
+Edge on the computer (Edge comes with Windows 10/11).
+
+## Desktop app (HTMLtoVideo.exe)
+
+```
+┌ HTML to Video ────────────────────────────────────────────────────────┐
+│ [HTML] promo.html      │  Rendered video | Live HTML      1920×1080 · 30 fps │
+│ [ Open HTML file    ]  │ ┌───────────────────────────────────────────┐ │
+│ Resolution  Auto       │ │                                       (⬇) │ │
+│ Frame rate  30         │ │            your video plays here          │ │
+│ Length      auto       │ │                                           │ │
+│ Quality     High       │ │ ▶ ───────●──────────────────── 0:01/0:03  │ │
+│ [ ▶ Render video    ]  │ └───────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Download** `HTMLtoVideo.exe` from the repository's **Releases** page (or from
+   the latest *Build Windows app* run under **Actions → Artifacts**). It is a single
+   file: no installation, no ffmpeg, nothing else to download.
+2. Double-click it. The app opens in its own window. (Windows SmartScreen may
+   warn about an unknown app: click *More info → Run anyway*.)
+3. **Open HTML file** (or paste a path, or drop an `.html` file onto the `.exe`).
+4. Pick resolution (*Auto* uses the page's own stage size), frame rate, length and
+   quality, then click **Render video**.
+5. The video plays in the player: frame-exact, just like in the browser. The
+   **Live HTML** tab shows the original page for comparison.
+6. Click the **⬇ download button** on the player, **choose a folder**, and the
+   MP4 is saved there.
+
+The video is encoded by the browser's own encoder: **H.264 + AAC MP4** with Chrome
+or Edge (plays everywhere, imports into any editor). `<audio>` in the page is
+mixed into the soundtrack. To **edit** the animation (each object separately), use
+the plugin below with the same HTML file.
+
+Build it yourself: `npm install`, then `npm run build:exe` (Windows .exe, from
+any OS) or `npm run build:app` (current OS). Run from source: `npm run app`.
+
+## Premiere Pro / After Effects plugin
+
+The same panel works in **Premiere Pro** (sequence + tracks) and **After Effects**
+(composition + layers).
 
 ```
 ┌ HTML to Video ──────────┐      Timeline
@@ -42,6 +88,11 @@ animation itself stays editable. **Works fully offline.**
    - Objects whose look changes (typing text, colour changes, canvas, video)
      come in as transparent picture sequences instead.
    - `<audio>` files go on **audio tracks** at their start time.
+4. **In After Effects** you get the same as a **composition**: the background
+   layer at the bottom, one layer per object above it (each starting when its
+   object appears), Position / Scale / Rotation / Opacity keyframes (linear), and
+   audio layers. **Build into: Active composition** adds the layers to the open
+   comp at the current time.
 
 Nothing is cut or removed: stacking all the tracks gives back the original page
 pixel for pixel. Anything that isn't its own object stays in the background track.
@@ -73,7 +124,8 @@ could not be loaded are listed in the panel's log in orange.
 
 ## Requirements
 
-- Adobe Premiere Pro **2020 (14.0) or newer**, Windows or macOS
+- Adobe Premiere Pro **2020 (14.0) or newer** or After Effects **2020 (17.0) or
+  newer**, Windows or macOS
 - **Google Chrome, Microsoft Edge, Brave or Chromium** installed. Edge ships
   with Windows 10/11, so Windows users usually need nothing extra. The plugin
   uses your installed browser instead of bundling one, which keeps it small:
@@ -85,7 +137,7 @@ could not be loaded are listed in the panel's log in orange.
 2. Run the installer:
    - **Windows**: double-click `scripts\install-win.bat`
    - **macOS**: open Terminal and run `bash scripts/install-mac.sh`
-3. Restart Premiere Pro.
+3. Restart Premiere Pro / After Effects.
 4. Open **Window → Extensions → HTML to Video**. Drag the panel to the left or
    right side of your workspace and dock it there.
 
@@ -146,7 +198,7 @@ how are in `skill/html-to-video/references/convert.md`.
 ## How it works
 
 ```
-index.html + js/main.js      Panel UI (CEP, runs inside Premiere)
+index.html + js/main.js      Panel UI (CEP, runs inside Premiere Pro and After Effects)
 js/core/chrome.js            Finds and starts headless Chrome / Edge
 js/core/cdp.js               Tiny Chrome DevTools Protocol client (no dependencies)
 js/core/inject.js            Runs inside the page: virtual clock, objects, stage, analysis
@@ -154,7 +206,12 @@ js/core/renderer.js          Analysis pass + capture pass: background, objects, 
 js/core/motion.js            On-screen box per frame -> Position/Scale/Rotation/Opacity keyframes
 js/core/netcache.js          Offline cache / local files for http(s) requests
 js/core/png.js               Tiny PNG reader (crops the still pictures)
-jsx/host.jsx                 ExtendScript: import PNG sequences, build sequence and tracks
+js/core/encoder.js           MP4 output: frames -> WebCodecs (H.264/AAC) in Chrome -> mp4-muxer
+js/core/encoder-page.js      … the part that runs in the browser (js/vendor/mp4-muxer.js, MIT)
+jsx/host.jsx                 ExtendScript: Premiere (h2v_build) and After Effects (h2vAE_build)
+app/                         Desktop app: local server + UI in a Chrome/Edge app window
+tools/build-exe.js           Packs the app into one HTMLtoVideo.exe (Node.js single executable)
+tools/smoke-app.js           End-to-end test of the app / .exe (renders an MP4)
 CSXS/manifest.xml            Extension manifest
 tools/render-cli.js          Same renderer from the command line (for testing)
 examples/demo.html           Demo page
@@ -185,6 +242,7 @@ You can render without Premiere (Node.js 22+):
 
 ```bash
 node tools/render-cli.js examples/demo.html out/demo --fps 30 --width 1920 --height 1080
+node tools/render-cli.js examples/demo.html --video out/demo.mp4 --quality high   # plain MP4
 # options: --width auto  --duration 5  --mode objects|sections|flat  --max-layers 60
 #          --keyframes off  --chrome "<path>"  --debug 1 (says why an object is not keyframed)
 ```

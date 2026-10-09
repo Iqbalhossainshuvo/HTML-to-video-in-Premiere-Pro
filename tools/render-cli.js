@@ -3,7 +3,8 @@
  * Command-line version of the renderer (handy for testing outside Premiere).
  *   node tools/render-cli.js page.html out-folder [--fps 30] [--duration 5]
  *        [--width 1920|auto] [--height 1080] [--mode objects|sections|flat] [--max-layers 60]
- *        [--keyframes on|off]
+ *        [--keyframes on|off] [--video out.mp4 [--quality medium|high|max]]
+ *   node tools/render-cli.js page.html --video out.mp4   (plain MP4, no layers)
  * Needs Node 22+ (built-in WebSocket).
  */
 'use strict';
@@ -16,6 +17,7 @@ for (let i = 0; i < argv.length; i++) {
   if (argv[i].startsWith('--')) opt[argv[i].slice(2)] = argv[++i];
   else pos.push(argv[i]);
 }
+if (opt.video && pos.length === 1) pos.push(null);
 if (pos.length < 2) {
   console.error('Usage: node tools/render-cli.js page.html out-folder [options]');
   process.exit(1);
@@ -30,6 +32,8 @@ render({
   height: opt.width === 'auto' ? 'auto' : Number(opt.height) || 1080,
   keyframes: opt.keyframes !== 'off',
   debug: 'debug' in opt,
+  video: opt.video,
+  quality: opt.quality,
   mode: opt.mode || 'objects',
   maxLayers: Number(opt['max-layers']) || 60,
   chromePath: opt.chrome,
@@ -39,6 +43,10 @@ render({
     else console.log('\n' + p.message);
   }
 }).then((m) => {
+  if (m.video) {
+    console.log('\nVideo:', m.video, '(' + m.codecs.video + (m.codecs.audio ? ' + ' + m.codecs.audio : '') + ')');
+    return;
+  }
   console.log('\nManifest:', m.manifestPath);
   console.log('Layers (bottom to top):');
   console.log('  ' + m.background.name + '  frames ' + m.background.frames);

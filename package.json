@@ -1,14 +1,22 @@
 {
   "name": "html-to-video-premiere-pro",
   "version": "1.0.0",
-  "description": "Adobe Premiere Pro panel that converts an HTML file to video frame by frame, with every object and icon on its own track.",
+  "description": "Convert HTML animations to video: an Adobe Premiere Pro / After Effects panel (every object on its own track, editable keyframes) and a desktop app (HTMLtoVideo.exe) that renders MP4.",
   "private": true,
   "license": "MIT",
   "scripts": {
     "render": "node tools/render-cli.js",
-    "demo": "node tools/render-cli.js examples/demo.html out/demo"
+    "demo": "node tools/render-cli.js examples/demo.html out/demo",
+    "app": "node app/main.js",
+    "build:exe": "node tools/build-exe.js",
+    "build:app": "node tools/build-exe.js --target=current"
   },
   "engines": {
-    "node": ">=22 (CLI only; inside Premiere the panel uses Premiere's own Node.js)"
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "postject": "^1.0.0-alpha.6",
+    "resedit": "^2.0.3"
   }
 }

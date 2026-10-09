@@ -1,4 +1,4 @@
 @echo off
 rmdir /s /q "%APPDATA%\Adobe\CEP\extensions\HTMLtoVideo"
-echo HTML to Video removed. Restart Premiere Pro.
+echo HTML to Video removed. Restart Premiere Pro or After Effects.
 pause

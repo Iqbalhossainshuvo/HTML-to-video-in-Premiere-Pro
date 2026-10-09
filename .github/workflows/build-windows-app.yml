@@ -1,0 +1,53 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install build tools
+        run: npm ci
+
+      - name: Build HTMLtoVideo.exe
+        run: npm run build:exe
+
+      - name: Smoke test (render an MP4 with the .exe and Chrome)
+        run: node tools/smoke-app.js dist/HTMLtoVideo.exe
+
+      - name: Package the Premiere Pro / After Effects plugin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force plugin/HTMLtoVideo | Out-Null
+          Copy-Item -Recurse CSXS, css, js, jsx, scripts, examples, index.html, .debug, README.md, LICENSE plugin/HTMLtoVideo
+          Compress-Archive -Path plugin/HTMLtoVideo -DestinationPath dist/HTMLtoVideo-Plugin.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HTMLtoVideo-windows
+          path: |
+            dist/HTMLtoVideo.exe
+            dist/HTMLtoVideo-Plugin.zip
+            skill/html-to-video.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/HTMLtoVideo.exe
+            dist/HTMLtoVideo-Plugin.zip
+            skill/html-to-video.zip

@@ -3,6 +3,7 @@
   <Extension Id="com.iqbalhossain.htmltovideo.panel">
     <HostList>
       <Host Name="PPRO" Port="8098"/>
+      <Host Name="AEFT" Port="8099"/>
     </HostList>
   </Extension>
 </ExtensionList>

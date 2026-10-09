@@ -11,6 +11,8 @@
     <HostList>
       <!-- Premiere Pro 2020 (14.0) and newer -->
       <Host Name="PPRO" Version="[14.0,99.9]"/>
+      <!-- After Effects 2020 (17.0) and newer -->
+      <Host Name="AEFT" Version="[17.0,99.9]"/>
     </HostList>
     <LocaleList>
       <Locale Code="All"/>
