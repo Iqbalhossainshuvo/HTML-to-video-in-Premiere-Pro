@@ -18,9 +18,12 @@ const ROOT = path.join(__dirname, '..');
 const PORT = 47000 + Math.floor(Math.random() * 1000);
 const exe = process.argv[2];
 const args = ['--no-window', '--port=' + PORT];
-// a throw-away home folder: settings and saved videos go there
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'h2v-smoke-home-'));
-const env = Object.assign({}, process.env, { HOME, USERPROFILE: HOME, APPDATA: path.join(HOME, 'AppData') });
+// a throw-away home folder for settings and saved videos (not on Windows:
+// Chrome refuses remote debugging when USERPROFILE is changed; CI machines
+// are thrown away anyway)
+const WIN = process.platform === 'win32';
+const HOME = WIN ? os.homedir() : fs.mkdtempSync(path.join(os.tmpdir(), 'h2v-smoke-home-'));
+const env = WIN ? process.env : Object.assign({}, process.env, { HOME });
 const child = exe
   ? spawn(path.resolve(exe), args, { stdio: 'inherit', env })
   : spawn(process.execPath, [path.join(ROOT, 'app', 'main.js')].concat(args), { stdio: 'inherit', env });
