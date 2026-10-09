@@ -101,6 +101,7 @@ class LayerWriter {
 function lengthMessage(m, seconds) {
   const s = seconds.toFixed(seconds % 1 ? 1 : 0) + ' s';
   if (m.how === 'declared') return 'Length: ' + s + ' (set by the page)';
+  if (m.how === 'repeat') return 'Length: ' + s + ' (the whole story once: the page plays it again and again; type a Length to change it)';
   if (m.how === 'loop') return 'Length: ' + s + ' (one cycle: this page animates forever; type a Length to make it longer)';
   return 'Length: ' + s + ' (measured: the page stops changing there; type a Length to change it)';
 }

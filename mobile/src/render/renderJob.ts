@@ -104,7 +104,7 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
     const secs = duration.toFixed(duration % 1 ? 1 : 0) + ' s';
     host.progress({
       stage: 'info',
-      message: 'Length: ' + secs + (m.how === 'loop' ? ' (one cycle of an endless animation)' : m.how === 'declared' ? ' (set by the page)' : '')
+      message: 'Length: ' + secs + (m.how === 'repeat' ? ' (the whole story once; it repeats)' : m.how === 'loop' ? ' (one cycle of an endless animation)' : m.how === 'declared' ? ' (set by the page)' : '')
     });
     if (m.probed) await load(); // start again at t = 0
   }

@@ -333,6 +333,66 @@
     return 0;
   }
 
+  // A fingerprint of what the page shows, without continuous motion:
+  // texts, classes and the inline display / visibility / opacity of every
+  // element. Changes when a scene or caption changes.
+  function storyPrint() {
+    var h = 5381;
+    function add(str) {
+      for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    }
+    var body = document.body;
+    if (!body) return 0;
+    add(body.textContent || '');
+    var els = body.getElementsByTagName('*');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var c = el.getAttribute('class');
+      if (c) add(c);
+      var st = el.style;
+      if (st && (st.display || st.visibility || st.opacity)) {
+        add(st.display + '|' + st.visibility + '|' + (st.opacity === '' ? '' : Math.round(Number(st.opacity) * 10)));
+      }
+      add(';');
+    }
+    return h;
+  }
+
+  // How many steps differ when the story is shifted by p (from step `from`);
+  // -1 when the story never changes there.
+  function periodMisses(prints, p, from, limit) {
+    var bad = 0;
+    var changes = 0;
+    for (var i = from; i < prints.length - p && bad <= limit; i++) {
+      if (prints[i] !== prints[i + p]) bad++;
+      if (i > from && prints[i] !== prints[i - 1]) changes++;
+    }
+    return changes ? bad : -1;
+  }
+
+  // Period (in steps) after which the story repeats itself, or 0.
+  function storyPeriod(prints, minP) {
+    var n = prints.length;
+    for (var p = minP; p * 2.2 <= n; p++) {
+      // from the start, and (for a page with an intro) from one period in
+      var starts = n >= p * 3 ? [0, p] : [0];
+      for (var s = 0; s < starts.length; s++) {
+        var from = starts[s];
+        var allowed = Math.max(2, Math.floor((n - p - from) * 0.02));
+        var bad = periodMisses(prints, p, from, allowed);
+        if (bad < 0 || bad > allowed) continue;
+        // timing jitter lets a period one or two steps short pass: take the best fit
+        var best = p;
+        for (var q = p + 1; q <= p + 3 && q * 2.2 <= n; q++) {
+          var b = periodMisses(prints, q, from, bad);
+          if (b >= 0 && b < bad) { bad = b; best = q; }
+        }
+        return best;
+      }
+    }
+    return 0;
+  }
+
   // Runs the page forward on the virtual clock (without capturing) to see
   // when it stops changing. The renderer reloads the page afterwards.
   async function probe(maxMs, stepMs) {
@@ -351,6 +411,11 @@
     var minCycle = 0;
     var hasCanvas = false;
     var looping = false;
+    var period = 0;
+    var prints = [];
+    var lastPrint = null;
+    var storyAt = 0; // last time the story moved on (not counting endless decoration)
+    var minP = Math.ceil(2000 / stepMs);
     var t = 0;
     for (var step = 0; t <= maxMs; t += stepMs, step++) {
       // let the browser breathe (phones): a real pause every 10 steps
@@ -359,6 +424,7 @@
       await setTime(t, true);
       hasCanvas = hasCanvas || !!document.querySelector('canvas');
       var busy = hadRaf && hasCanvas;
+      var story = false;
       // A requestAnimationFrame loop or a setInterval can drive scenes that
       // hold still for a while between changes: wait longer before deciding
       // the animation has ended.
@@ -374,7 +440,7 @@
         if (!controlled(a) || !a.effect) continue;
         var ct = a.effect.getComputedTiming();
         if (isFinite(ct.endTime)) {
-          if (a.playState !== 'finished' && (Number(a.currentTime) || 0) < ct.endTime) busy = true;
+          if (a.playState !== 'finished' && (Number(a.currentTime) || 0) < ct.endTime) story = true;
         } else {
           minCycle = Math.max(minCycle, (ct.delay || 0) + (Number(ct.duration) || 0));
         }
@@ -386,20 +452,46 @@
             (now - st.birth) / 1000 < vids[j].duration)) busy = true;
       }
       for (var k in timers) {
-        if (!timers[k].repeat) { busy = true; break; }
+        if (!timers[k].repeat) { story = true; break; }
       }
       // GSAP timelines: still busy while tweens are scheduled ahead, even
       // during a scene that holds still
       var gEnd = gsapEnd();
-      if (gEnd > 0 && now / 1000 < gEnd) busy = true;
-      if (busy) activity = now;
+      if (gEnd > 0 && now / 1000 < gEnd) story = true;
+      var print = storyPrint();
+      prints.push(print);
+      if (lastPrint !== null && print !== lastPrint) story = true;
+      lastPrint = print;
+      if (story) storyAt = now;
+      if (busy || story) activity = now;
       var last = Math.max(activity, lastMutation);
       if (t - last >= idleNeed) break;
+      // Something keeps moving for ever (a background effect, a loop):
+      // the story has ended when nothing but that has changed for a while
+      if (t - storyAt >= Math.max(15000, idleNeed) && t >= 20000) {
+        if (storyAt > 0) activity = lastMutation = storyAt;
+        else looping = true; // only endless motion (e.g. a canvas), no story at all
+        break;
+      }
+      // ... or the whole story plays again and again: one round is the video
+      if (step % 50 === 49 && t >= 20000) {
+        period = storyPeriod(prints, minP);
+        if (period && prints.length >= period * 2.5) break;
+        period = 0;
+      }
     }
     mo.disconnect();
+    if (!period && t > maxMs) period = storyPeriod(prints, minP);
     var lastAct = Math.max(activity, lastMutation);
-    if (t > maxMs) looping = true;
-    return { lastActivity: lastAct, minCycle: minCycle, looping: looping };
+    if (period || looping) looping = true;
+    else if (t > maxMs) {
+      if (t - storyAt >= 10000) lastAct = storyAt; // the story ended; decoration goes on
+      else looping = true;
+    }
+    return {
+      lastActivity: lastAct, minCycle: minCycle, looping: looping,
+      period: period * stepMs, storyEnd: storyAt
+    };
   }
 
   // The video length (seconds) and how it was found. A length the page
@@ -411,7 +503,10 @@
     var declared = declaredDuration(false);
     var p = await probe(maxMs, stepMs);
     var measured, how;
-    if (p.looping) {
+    if (p.period > 0) {
+      measured = p.period / 1000; // the story repeats: one full round
+      how = 'repeat';
+    } else if (p.looping) {
       measured = p.minCycle > 0 ? p.minCycle / 1000 : 10; // one cycle of an endless loop
       how = 'loop';
     } else {

@@ -1,6 +1,6 @@
 {
   "name": "html-to-video-premiere-pro",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Convert HTML animations to video: an Adobe Premiere Pro / After Effects panel (every object on its own track, editable keyframes) and a desktop app (HTMLtoVideo.exe) that renders MP4.",
   "private": true,
   "license": "MIT",

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest Version="7.0"
     ExtensionBundleId="com.iqbalhossain.htmltovideo"
-    ExtensionBundleVersion="1.0.3"
+    ExtensionBundleVersion="1.0.4"
     ExtensionBundleName="HTML to Video"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
