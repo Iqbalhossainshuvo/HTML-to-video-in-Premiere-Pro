@@ -34,7 +34,8 @@ jobs:
         run: node tools/smoke-app.js dist/HTMLtoVideo.exe
 
       - name: Check the file dialog helper (Windows PowerShell)
-        run: node -e "require('./app/dialogs').ping().then((r) => { console.log('helper:', r); process.exit(r === 'pong' ? 0 : 1); })"
+        run: |
+          node -e "require('./app/dialogs').ping().then((r) => { console.log('helper', r); process.exit(r === 'pong' ? 0 : 1); })"
 
       - name: Package the Premiere Pro / After Effects plugin
         shell: pwsh
