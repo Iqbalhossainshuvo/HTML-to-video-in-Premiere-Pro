@@ -5,6 +5,11 @@ on:
     branches: [main, 'claude/**']
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Publish a release with this tag (e.g. v1.0.0); leave empty to only build'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -44,9 +49,18 @@ jobs:
             skill/html-to-video.zip
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: HTML to Video ${{ inputs.release_tag || github.ref_name }}
+          body: |
+            **HTMLtoVideo.exe**: Windows desktop app. Open an HTML file, render it to MP4, watch it in the player, ⬇ save to a folder. Needs Chrome or Edge. Unsigned: if Windows warns, click *More info → Run anyway*.
+            **HTMLtoVideo-Plugin.zip**: Premiere Pro / After Effects plugin (every object on its own track/layer, editable keyframes). Unzip, run `scripts/install-win.bat` or `scripts/install-mac.sh`.
+            **html-to-video.zip**: Claude skill for writing HTML animations that convert cleanly.
+
+            বাংলা নির্দেশিকা: README.bn.md
           files: |
             dist/HTMLtoVideo.exe
             dist/HTMLtoVideo-Plugin.zip
