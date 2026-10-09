@@ -64,13 +64,19 @@
   }
 
   $('openBtn').addEventListener('click', function () {
-    $('openBtn').disabled = true;
+    var btn = $('openBtn');
+    var label = btn.lastChild.textContent;
+    btn.disabled = true;
+    btn.lastChild.textContent = ' Choose the file in the window that opened…';
     api('open', {}).then(function (r) {
       if (r.picked) {
         setHtml(r.html);
         log('Opened ' + r.html.path);
       }
-    }).catch(function (e) { log(e.message, 'err'); }).then(function () { $('openBtn').disabled = false; });
+    }).catch(function (e) { log(e.message, 'err'); }).then(function () {
+      btn.lastChild.textContent = label;
+      btn.disabled = state.rendering;
+    });
   });
 
   $('pathForm').addEventListener('submit', function (e) {
@@ -127,7 +133,9 @@
   var events = new EventSource('/events');
   events.addEventListener('progress', function (e) {
     var p = JSON.parse(e.data);
-    if (p.stage === 'render') {
+    if (p.stage === 'edit') {
+      setProgress(p.fraction, p.message);
+    } else if (p.stage === 'render') {
       setProgress(p.fraction, p.message + (p.eta > 0 ? ' · about ' + p.eta + ' s left' : ''));
     } else if (p.stage === 'analyze') {
       setProgress(null, p.message);
@@ -143,6 +151,21 @@
     log('Video ready: ' + v.width + '×' + v.height + ', ' + v.fps + ' fps, ' + v.duration.toFixed(2) + ' s (' +
       v.codecs.video + (v.codecs.audio ? ' + ' + v.codecs.audio : '') + ')', 'ok');
     showVideo(v);
+  });
+  events.addEventListener('edit-wait', function (e) {
+    var w = JSON.parse(e.data);
+    setRendering(false);
+    setProgress(1, w.message);
+    log(w.message, w.restart ? 'warn' : null);
+    if (w.restart) message('Restart ' + appName(w.host), w.message);
+  });
+  events.addEventListener('edit-done', function (e) {
+    var d = JSON.parse(e.data);
+    setProgress(d.ok ? 1 : 0, d.ok ? 'Opened in ' + appName(d.host) : '');
+    log(d.message, d.ok ? 'ok' : 'err');
+    toast(d.ok ? d.message : 'Could not open it: ' + d.message, 'Show files', function () {
+      api('reveal', { path: d.folder });
+    });
   });
   events.addEventListener('failed', function (e) {
     var f = JSON.parse(e.data);
@@ -162,6 +185,7 @@
     state.stage = { w: v.width, h: v.height };
     $('emptyState').classList.add('hidden');
     $('player').classList.remove('hidden');
+    $('saveBar').classList.remove('hidden');
     var video = $('video');
     video.src = '/video/' + v.id + '.mp4';
     video.load();
@@ -172,16 +196,48 @@
     updateLiveSize();
   }
 
-  $('downloadBtn').addEventListener('click', function () {
-    if (!state.video) return;
-    var btn = $('downloadBtn');
-    btn.disabled = true;
+  function showSaveDir(dir) {
+    state.saveDir = dir;
+    $('saveDir').textContent = dir;
+    $('saveDir').title = dir;
+    $('downloadBtn').title = 'Save the video to ' + dir;
+  }
+
+  var savedTimer = null;
+  function save() {
+    if (!state.video || state.saving) return;
+    state.saving = true;
+    $('downloadBtn').disabled = $('saveBtn').disabled = true;
     api('save', {}).then(function (r) {
-      if (!r.saved) return;
       log('Saved ' + r.path, 'ok');
-      toast('Saved: ' + r.path, 'Show in folder', function () { api('reveal', { path: r.path }); });
-    }).catch(function (e) { log(e.message, 'err'); }).then(function () { btn.disabled = false; });
-  });
+      toast('Saved to ' + r.path, 'Show in folder', function () { api('reveal', { path: r.path }); });
+      $('downloadBtn').classList.add('saved');
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(function () { $('downloadBtn').classList.remove('saved'); }, 2500);
+    }).catch(function (e) {
+      log(e.message, 'err');
+      toast(e.message, 'Change folder', changeFolder);
+    }).then(function () {
+      state.saving = false;
+      $('downloadBtn').disabled = $('saveBtn').disabled = false;
+    });
+  }
+  $('downloadBtn').addEventListener('click', save);
+  $('saveBtn').addEventListener('click', save);
+
+  function changeFolder() {
+    var btn = $('changeDirBtn');
+    btn.disabled = true;
+    btn.textContent = 'Choose in the window that opened…';
+    return api('save-folder', {}).then(function (r) {
+      showSaveDir(r.saveDir);
+      if (r.changed) log('Videos will be saved to ' + r.saveDir, 'ok');
+    }).catch(function (e) { log(e.message, 'err'); }).then(function () {
+      btn.disabled = false;
+      btn.textContent = 'Change…';
+    });
+  }
+  $('changeDirBtn').addEventListener('click', changeFolder);
 
   /* ---------- tabs / live preview ---------- */
   function selectTab(name) {
@@ -190,6 +246,7 @@
     });
     $('videoView').classList.toggle('hidden', name !== 'video');
     $('liveView').classList.toggle('hidden', name !== 'live');
+    $('saveBar').classList.toggle('hidden', name !== 'video' || !state.video);
     if (name === 'live') {
       $('video').pause();
       loadLive();
@@ -227,12 +284,65 @@
   }
   $('replayBtn').addEventListener('click', loadLive);
 
-  $('editBtn').addEventListener('click', function () { $('editDialog').showModal(); });
+  /* ---------- edit in Premiere Pro / After Effects ---------- */
+  function appName(host) {
+    return host === 'AEFT' ? 'After Effects' : 'Premiere Pro';
+  }
+
+  function message(title, text) {
+    $('msgTitle').textContent = title;
+    $('msgText').textContent = text;
+    $('msgDialog').showModal();
+  }
+
+  $('editBtn').addEventListener('click', function () {
+    if (!state.html) {
+      message('Open an HTML file first', 'Open the HTML file you want to edit, then click “Edit in Premiere / After Effects” again.');
+      return;
+    }
+    if (state.rendering) {
+      message('Please wait', 'A video is being rendered. Try again when it is done.');
+      return;
+    }
+    var choices = document.querySelectorAll('.app-choice');
+    Array.prototype.forEach.call(choices, function (b) { b.disabled = true; });
+    ['PPRO', 'AEFT'].forEach(function (k) { $('info-' + k).textContent = 'Looking…'; });
+    $('editNote').textContent = 'Uses the Resolution, Frame rate and Length chosen on the left.';
+    $('editDialog').showModal();
+    api('adobe').then(function (st) {
+      Array.prototype.forEach.call(choices, function (b) {
+        var a = st.apps[b.getAttribute('data-host')];
+        b.disabled = !a.found;
+        $('info-' + b.getAttribute('data-host')).textContent = !a.found ? 'Not installed on this computer' :
+          a.label + (a.running ? ' · open now' : '');
+      });
+      var note = st.plugin.current ? 'The plugin is installed.' :
+        st.plugin.installed ? 'The plugin will be updated.' : 'The plugin will be installed.';
+      $('editNote').textContent = note + ' Uses the Resolution, Frame rate and Length chosen on the left.';
+    }).catch(function (e) { $('editNote').textContent = e.message; });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.app-choice'), function (b) {
+    b.addEventListener('click', function () {
+      var host = b.getAttribute('data-host');
+      $('editDialog').close();
+      var body = { host: host };
+      FIELDS.forEach(function (k) { body[k] = $(k).value; });
+      setRendering(true);
+      setProgress(0, 'Preparing for ' + appName(host) + '…');
+      log('Preparing ' + state.html.name + ' for ' + appName(host) + ' (every object on its own layer)…');
+      api('edit', body).catch(function (e) {
+        setRendering(false);
+        log(e.message, 'err');
+      });
+    });
+  });
 
   /* ---------- start ---------- */
   api('state').then(function (s) {
     if (s.version) $('foot').textContent = 'HTML to Video ' + s.version + ' · works offline';
     if (!s.browser) log('Google Chrome or Microsoft Edge is needed to render. Please install one of them.', 'err');
+    if (s.saveDir) showSaveDir(s.saveDir);
     if (s.html) setHtml(s.html);
     if (s.video) showVideo(s.video);
     if (s.rendering) setRendering(true);

@@ -8,6 +8,8 @@
  */
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
@@ -16,9 +18,12 @@ const ROOT = path.join(__dirname, '..');
 const PORT = 47000 + Math.floor(Math.random() * 1000);
 const exe = process.argv[2];
 const args = ['--no-window', '--port=' + PORT];
+// a throw-away home folder: settings and saved videos go there
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'h2v-smoke-home-'));
+const env = Object.assign({}, process.env, { HOME, USERPROFILE: HOME, APPDATA: path.join(HOME, 'AppData') });
 const child = exe
-  ? spawn(path.resolve(exe), args, { stdio: 'inherit' })
-  : spawn(process.execPath, [path.join(ROOT, 'app', 'main.js')].concat(args), { stdio: 'inherit' });
+  ? spawn(path.resolve(exe), args, { stdio: 'inherit', env })
+  : spawn(process.execPath, [path.join(ROOT, 'app', 'main.js')].concat(args), { stdio: 'inherit', env });
 
 function request(method, route, body, headers) {
   return new Promise((resolve, reject) => {
@@ -89,6 +94,19 @@ async function main() {
   const text = full.body.toString('latin1');
   for (const box of ['moov', 'mdat', 'trak']) if (text.indexOf(box) < 0) fail('missing ' + box);
   console.log('MP4 OK: ' + full.body.length + ' bytes, codec ' + v.codecs.video);
+
+  // the download button: saves straight into the folder shown under the player
+  const st2 = JSON.parse((await request('GET', '/api/state', null, H)).body);
+  if (!st2.saveDir || !st2.saveDir.startsWith(HOME)) fail('unexpected save folder ' + st2.saveDir);
+  const saved = await request('POST', '/api/save', {}, H);
+  if (saved.status !== 200) fail('save: ' + saved.body);
+  const sv = JSON.parse(saved.body);
+  if (fs.statSync(sv.path).size !== full.body.length) fail('saved file has the wrong size');
+  console.log('Saved OK: ' + sv.path);
+
+  const ad = await request('GET', '/api/adobe', null, H);
+  if (ad.status !== 200) fail('adobe status: ' + ad.body);
+  console.log('Adobe:', ad.body.toString());
   child.kill();
   console.log('SMOKE TEST PASSED');
   process.exit(0);

@@ -7,7 +7,7 @@ web browser. **Works fully offline.** Two ways to use it:
 
 | | For whom | What you get |
 |---|---|---|
-| **[HTMLtoVideo.exe](#desktop-app-htmltovideoexe)**: desktop app | You just want the video | Open an HTML file, **Render video**, watch it in the built-in player, click **⬇** to save the **MP4** to a folder |
+| **[HTMLtoVideo.exe](#desktop-app-htmltovideoexe)**: desktop app | You just want the video | Open an HTML file, **Render video**, watch it in the built-in player, click **⬇** to save the **MP4** to a folder, or **Edit in Premiere / After Effects** |
 | **[Mobile app](mobile/README.md)** (Android / iOS, React Native + Expo) | You're on your phone | Choose an HTML (or .zip), **Render video**, watch it in the player, tap **⬇** to save it to the Gallery |
 | **[Premiere Pro / After Effects plugin](#premiere-pro--after-effects-plugin)** | You want to edit it | **Every object and icon on its own track/layer**, movement as real **Position / Scale / Rotation / Opacity keyframes** |
 
@@ -39,8 +39,22 @@ phone's own browser engine and video encoder.
    quality, then click **Render video**.
 5. The video plays in the player: frame-exact, just like in the browser. The
    **Live HTML** tab shows the original page for comparison.
-6. Click the **⬇ download button** on the player, **choose a folder**, and the
-   MP4 is saved there.
+6. Click the **⬇ download button** on the player: the MP4 is saved at once to the
+   folder shown under the player (**Save to:** `Videos\HTML to Video` at first).
+   **Change…** picks another folder; the app remembers it.
+7. **Edit in Premiere / After Effects** (top right): choose **Premiere Pro** or
+   **After Effects**. The first time, the plugin is installed for you. The app
+   converts the HTML into separate layers (every object with its own keyframes),
+   then opens the program (or switches to it) and builds a new sequence /
+   composition there by itself. If the program was already open when the
+   plugin was installed, close it and open it again once.
+
+Resolutions come in landscape, vertical (phone / Reels / Shorts) and square
+versions: 1920×1080 ↔ 1080×1920, 1280×720 ↔ 720×1280, 2560×1440 ↔ 1440×2560,
+3840×2160 ↔ 2160×3840, 1350×1080 ↔ 1080×1350, 1080×1080 and 2160×2160.
+The length is measured from the page (scenes driven by timers, `setInterval`,
+`requestAnimationFrame` loops, CSS, GSAP); the log shows the length found.
+Type a number of seconds in **Length** to choose it yourself.
 
 The video is encoded by the browser's own encoder: **H.264 + AAC MP4** with Chrome
 or Edge (plays everywhere, imports into any editor). `<audio>` in the page is
@@ -179,7 +193,7 @@ The PNG frames are saved in `Documents/HTML to Video/<file>_<date>/`.
 
 | Setting | Default | Notes |
 |---|---|---|
-| Resolution | Auto | **Auto** finds the page's own fixed-size stage (e.g. a 1920×1080 `<div>` scaled to fit the window) and uses its real size. Presets for HD, 4K, vertical 9:16, square, or custom |
+| Resolution | Auto | **Auto** finds the page's own fixed-size stage (e.g. a 1920×1080 `<div>` scaled to fit the window) and uses its real size. Presets for HD, 2K, 4K, each also vertical (9:16 / 4:5), square, or custom |
 | Frame rate | 30 | 24, 25, 30, 50, 60 |
 | Duration | `auto` | `auto` reads `const DURATION = 8` (or `DURATION_MS`, `TOTAL`, `TOTAL_MS`) from the page, else plays it until nothing changes (+1 s; a loop: one cycle; max 60 s). Or type seconds, e.g. `8` |
 | Editable keyframes | on | Objects that only move / scale / rotate / fade become one picture + keyframes. Off = every object is a picture sequence |

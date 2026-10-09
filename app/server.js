@@ -13,6 +13,32 @@ const crypto = require('crypto');
 const assets = require('../js/core/assets');
 const renderer = require('../js/core/renderer');
 const dialogs = require('./dialogs');
+const adobe = require('./adobe');
+
+const SETTINGS = path.join(os.homedir(), '.html-to-video', 'settings.json');
+
+function loadSettings() {
+  try { return JSON.parse(fs.readFileSync(SETTINGS, 'utf8')) || {}; } catch (e) { return {}; }
+}
+
+function storeSettings(s) {
+  try {
+    fs.mkdirSync(path.dirname(SETTINGS), { recursive: true });
+    fs.writeFileSync(SETTINGS, JSON.stringify(s, null, 2));
+  } catch (e) { /* not remembered */ }
+}
+
+// Videos (Windows) / Movies (macOS) › HTML to Video
+function defaultSaveDir() {
+  const videos = path.join(os.homedir(), process.platform === 'darwin' ? 'Movies' : 'Videos');
+  return path.join(videos, 'HTML to Video');
+}
+
+function stamp() {
+  const d = new Date();
+  const two = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + '-' + two(d.getHours()) + two(d.getMinutes()) + two(d.getSeconds());
+}
 
 const UI = {
   '/': ['app/ui/index.html', 'text/html; charset=utf-8'],
@@ -32,7 +58,11 @@ const TYPES = {
 function createServer(options) {
   const opts = options || {};
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'html-to-video-'));
-  const state = { html: opts.initialFile || null, job: null, video: null, saveDir: null, clients: new Set() };
+  const settings = loadSettings();
+  const state = {
+    html: opts.initialFile || null, job: null, video: null, clients: new Set(),
+    saveDir: settings.saveDir || defaultSaveDir()
+  };
   const token = crypto.randomBytes(16).toString('hex'); // only our own window may call the API
 
   function send(res, code, body, type, extra) {
@@ -92,10 +122,9 @@ function createServer(options) {
     if (state.job) throw new Error('A video is already being rendered.');
     const id = Date.now().toString(36);
     const out = path.join(tmp, id + '.mp4');
-    const job = { id, cancel: false, started: Date.now() };
+    const job = { id, cancel: false, started: Date.now(), html: state.html };
     state.job = job;
-    const size = String(body.resolution || 'auto');
-    const [w, h] = size === 'auto' ? ['auto', 'auto'] : size.split('x').map(Number);
+    const [w, h] = parseSize(body.resolution);
     broadcast('progress', { stage: 'start', message: 'Starting…', fraction: 0 });
     renderer.render({
       htmlPath: state.html,
@@ -114,7 +143,7 @@ function createServer(options) {
     }).then((r) => {
       const old = state.video;
       state.video = {
-        id, file: out, name: path.basename(state.html).replace(/\.[^.]+$/, '') + '.mp4',
+        id, file: out, html: job.html, name: path.basename(state.html).replace(/\.[^.]+$/, '') + '.mp4',
         width: r.width, height: r.height, fps: r.fps, frames: r.frames, duration: r.duration,
         codecs: r.codecs, seconds: Math.round((Date.now() - job.started) / 100) / 10,
         size: fs.statSync(out).size
@@ -129,6 +158,98 @@ function createServer(options) {
     return { id };
   }
 
+  function parseSize(resolution) {
+    const size = String(resolution || 'auto');
+    return size === 'auto' ? ['auto', 'auto'] : size.split('x').map(Number);
+  }
+
+  // "Edit in Premiere Pro / After Effects": install the plugin, convert the
+  // HTML into layers, then hand it to the program (see app/adobe.js).
+  async function startEdit(body) {
+    const key = body.host;
+    const host = adobe.HOSTS[key];
+    if (!host) throw new Error('Unknown program.');
+    if (!state.html || !fs.existsSync(state.html)) throw new Error('Open an HTML file first.');
+    if (state.job) throw new Error('Please wait: a video is being rendered.');
+    if (!adobe.findApps()[key]) throw new Error(host.name + ' was not found on this computer.');
+    const job = { id: 'edit', cancel: false, started: Date.now(), html: state.html };
+    state.job = job;
+    const step = (message, fraction) => broadcast('progress', { stage: 'edit', message, fraction });
+    (async () => {
+      step('Installing the plugin…', 0);
+      const changed = await adobe.installPlugin();
+      const wasRunning = (await adobe.runningPid(key)) > 0;
+
+      const [w, h] = parseSize(body.resolution);
+      let duration = body.duration && body.duration !== 'auto' ? Number(body.duration) : 'auto';
+      // the same length as the video already rendered from this file
+      if (duration === 'auto' && state.video && state.video.html === state.html) duration = state.video.duration;
+      const base = path.basename(state.html).replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+      const outDir = path.join(os.homedir(), 'Documents', 'HTML to Video', base + '_' + stamp());
+      const manifest = await renderer.render({
+        htmlPath: state.html,
+        outDir,
+        width: w,
+        height: h,
+        fps: Number(body.fps) || 30,
+        duration,
+        mode: 'objects',
+        keyframes: true,
+        maxLayers: 60,
+        chromePath: opts.chromePath,
+        isCancelled: () => job.cancel,
+        onProgress: (p) => {
+          if (p.stage === 'analyze') step(p.message, 0.05 + (p.frame / p.frames) * 0.25);
+          else if (p.stage === 'render') step(p.message + (p.eta > 0 ? ' · about ' + p.eta + ' s left' : ''), 0.3 + (p.frame / p.frames) * 0.65);
+          else broadcast('progress', Object.assign({ fraction: null }, p));
+        }
+      });
+      if (job.cancel) throw new Error('Cancelled.');
+      const queued = adobe.queueJob(key, manifest.manifestPath);
+      step('Layers ready: ' + manifest.layers.length + ' objects', 0.97);
+
+      if (wasRunning && changed) {
+        broadcast('edit-wait', {
+          host: key,
+          restart: true,
+          message: 'The plugin was just installed. Close ' + host.name + ' and open it again: your video then opens in it by itself.'
+        });
+      } else {
+        step((wasRunning ? 'Switching to ' : 'Starting ') + host.name + '…', 0.98);
+        await adobe.openApp(key, dialogs.activate);
+        broadcast('edit-wait', {
+          host: key,
+          message: wasRunning ? 'Building in ' + host.name + '…' : host.name + ' is starting. The video opens in it as soon as it is ready.'
+        });
+      }
+      watchJob(queued, host.name, outDir);
+    })().catch((e) => {
+      broadcast('failed', { message: job.cancel ? 'Cancelled.' : (e && e.message) || String(e) });
+    }).then(() => {
+      if (state.job === job) state.job = null;
+    });
+    return { ok: true };
+  }
+
+  // Waits (up to 2 hours) for the plugin's answer.
+  function watchJob(queued, name, outDir) {
+    let taken = false;
+    const timer = setInterval(() => {
+      const r = adobe.jobResult(queued);
+      if (r) {
+        clearInterval(timer);
+        broadcast('edit-done', { ok: !!r.ok, host: queued.host, folder: outDir,
+          message: r.ok ? 'Opened in ' + name + ': ' + r.message : name + ': ' + r.message });
+      } else if (!taken && adobe.jobTaken(queued)) {
+        taken = true;
+        broadcast('edit-wait', { host: queued.host, message: 'Building in ' + name + '…' });
+      } else if (Date.now() - queued.created > 2 * 3600 * 1000) {
+        clearInterval(timer);
+      }
+    }, 1000);
+    timer.unref();
+  }
+
   async function api(req, res, route) {
     if (req.headers['x-token'] !== token) return send(res, 403, { error: 'forbidden' });
     const body = req.method === 'POST' ? await readBody(req) : {};
@@ -138,6 +259,7 @@ function createServer(options) {
           html: state.html ? fileInfo(state.html) : null,
           video: state.video,
           rendering: !!state.job,
+          saveDir: state.saveDir,
           browser: renderer.findChrome(opts.chromePath),
           version: opts.version
         });
@@ -162,14 +284,35 @@ function createServer(options) {
         if (state.job) state.job.cancel = true;
         return send(res, 200, { ok: true });
       case 'save': {
-        if (!state.video) return send(res, 400, { error: 'Render a video first.' });
-        const dir = await dialogs.chooseFolder(state.saveDir || path.join(os.homedir(), 'Videos'));
-        if (!dir) return send(res, 200, { saved: false });
-        state.saveDir = dir;
-        const dest = uniquePath(dir, state.video.name);
-        await fs.promises.copyFile(state.video.file, dest);
-        return send(res, 200, { saved: true, path: dest });
+        // straight into the chosen folder (shown under the player)
+        if (!state.video || !fs.existsSync(state.video.file)) return send(res, 400, { error: 'Render a video first.' });
+        try {
+          fs.mkdirSync(state.saveDir, { recursive: true });
+          const dest = uniquePath(state.saveDir, state.video.name);
+          await fs.promises.copyFile(state.video.file, dest);
+          if (fs.statSync(dest).size !== fs.statSync(state.video.file).size) throw new Error('The copy is incomplete.');
+          return send(res, 200, { saved: true, path: dest, dir: state.saveDir });
+        } catch (e) {
+          return send(res, 400, { error: 'Could not save to ' + state.saveDir + ': ' + e.message + ' Click “Change” to pick another folder.' });
+        }
       }
+      case 'save-folder': {
+        const dir = await dialogs.chooseFolder(fs.existsSync(state.saveDir) ? state.saveDir : path.dirname(state.saveDir));
+        if (dir) {
+          state.saveDir = dir;
+          settings.saveDir = dir;
+          storeSettings(settings);
+        }
+        return send(res, 200, { saveDir: state.saveDir, changed: !!dir });
+      }
+      case 'adobe':
+        return send(res, 200, await adobe.status());
+      case 'edit':
+        try {
+          return send(res, 200, await startEdit(body));
+        } catch (e) {
+          return send(res, 400, { error: e.message });
+        }
       case 'reveal':
         if (body.path && fs.existsSync(body.path)) dialogs.reveal(body.path);
         return send(res, 200, { ok: true });
@@ -221,6 +364,7 @@ function createServer(options) {
         url: 'http://127.0.0.1:' + server.address().port + '/',
         close() {
           server.close();
+          dialogs.stop();
           if (state.job) state.job.cancel = true;
           try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* ignore */ }
         }

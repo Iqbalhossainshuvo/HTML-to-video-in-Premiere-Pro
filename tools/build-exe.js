@@ -21,10 +21,12 @@ const ROOT = path.join(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 const BUILD = path.join(DIST, 'build');
 const VERSION = require('../package.json').version;
-const ASSETS = [
+const ASSETS = [...new Set([
   'app/ui/index.html', 'app/ui/app.css', 'app/ui/app.js', 'app/ui/icon.svg',
-  'js/core/inject.js', 'js/core/encoder-page.js', 'js/vendor/mp4-muxer.js'
-];
+  'js/core/inject.js', 'js/core/encoder-page.js', 'js/vendor/mp4-muxer.js',
+  // the Premiere Pro / After Effects plugin, installed by "Edit in…"
+  ...require('../app/adobe').PLUGIN_FILES
+])];
 const FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
 
 const target = (process.argv.find((a) => a.startsWith('--target=')) || '--target=win-x64').split('=')[1];
@@ -115,7 +117,8 @@ async function main() {
     output: path.join(BUILD, 'app.blob'),
     disableExperimentalSEAWarning: true,
     useSnapshot: false,
-    useCodeCache: false,
+    // faster start; the cache only works on the platform that made it
+    useCodeCache: target === 'current' || process.platform === 'win32',
     assets: {}
   };
   for (const a of ASSETS) config.assets[a] = path.join(ROOT, a);

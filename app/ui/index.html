@@ -42,12 +42,24 @@
         <label>Resolution
           <select id="resolution">
             <option value="auto">Auto (the page's own stage size)</option>
-            <option value="1920x1080">1920 × 1080 · Full HD</option>
-            <option value="1280x720">1280 × 720 · HD</option>
-            <option value="3840x2160">3840 × 2160 · 4K</option>
-            <option value="1080x1920">1080 × 1920 · Vertical</option>
-            <option value="1080x1080">1080 × 1080 · Square</option>
-            <option value="1080x1350">1080 × 1350 · Portrait 4:5</option>
+            <optgroup label="Landscape">
+              <option value="1920x1080">1920 × 1080 · Full HD</option>
+              <option value="1280x720">1280 × 720 · HD</option>
+              <option value="2560x1440">2560 × 1440 · 2K</option>
+              <option value="3840x2160">3840 × 2160 · 4K</option>
+              <option value="1350x1080">1350 × 1080 · 5:4</option>
+            </optgroup>
+            <optgroup label="Vertical (phone, Reels, Shorts, TikTok)">
+              <option value="1080x1920">1080 × 1920 · Full HD vertical</option>
+              <option value="720x1280">720 × 1280 · HD vertical</option>
+              <option value="1440x2560">1440 × 2560 · 2K vertical</option>
+              <option value="2160x3840">2160 × 3840 · 4K vertical</option>
+              <option value="1080x1350">1080 × 1350 · 4:5 portrait</option>
+            </optgroup>
+            <optgroup label="Square">
+              <option value="1080x1080">1080 × 1080 · Square</option>
+              <option value="2160x2160">2160 × 2160 · 4K square</option>
+            </optgroup>
           </select>
         </label>
         <div class="row">
@@ -98,10 +110,21 @@
         </div>
         <div class="player hidden" id="player">
           <video id="video" controls playsinline preload="auto"></video>
-          <button class="download" id="downloadBtn" title="Save video to a folder" aria-label="Save video to a folder">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" /></svg>
+          <button class="download" id="downloadBtn" title="Save the video" aria-label="Save the video">
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-down"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" /></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-ok"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
           </button>
         </div>
+      </div>
+      <div class="savebar hidden" id="saveBar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+        <span class="savebar-label">Save to:</span>
+        <span class="savebar-path" id="saveDir" title=""></span>
+        <button class="link" id="changeDirBtn">Change…</button>
+        <button class="btn primary small" id="saveBtn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" /></svg>
+          Save video
+        </button>
       </div>
 
       <div class="viewer hidden" id="liveView">
@@ -114,14 +137,28 @@
   <div class="toast hidden" id="toast"><span id="toastText"></span><button id="toastAction" class="link"></button></div>
 
   <dialog id="editDialog">
-    <h2>Edit every object in Premiere Pro or After Effects</h2>
-    <p>The <b>HTML to Video</b> plugin (in this same project) converts the same HTML file into an editable
-      sequence or composition: every text, image and icon on its own track/layer, movement as real keyframes.</p>
-    <ol>
-      <li>Install the plugin: run <code>scripts/install-win.bat</code> (Windows) or <code>scripts/install-mac.sh</code> (macOS) from the project folder.</li>
-      <li>Restart Premiere Pro or After Effects and open <b>Window → Extensions → HTML to Video</b>.</li>
-      <li>Click <b>Upload your file</b>, choose this HTML file, then <b>Convert video</b>.</li>
-    </ol>
+    <h2>Edit in Premiere Pro or After Effects</h2>
+    <p class="muted">Every text, image and icon becomes its own track or layer, with its movement as real keyframes.
+      The plugin is installed for you the first time.</p>
+    <div class="apps">
+      <button class="app-choice" data-host="PPRO" disabled>
+        <span class="app-badge pr">Pr</span>
+        <b>Premiere Pro</b>
+        <small id="info-PPRO">Looking…</small>
+      </button>
+      <button class="app-choice" data-host="AEFT" disabled>
+        <span class="app-badge ae">Ae</span>
+        <b>After Effects</b>
+        <small id="info-AEFT">Looking…</small>
+      </button>
+    </div>
+    <p class="note" id="editNote">Uses the Resolution, Frame rate and Length chosen on the left.</p>
+    <form method="dialog"><button class="btn">Cancel</button></form>
+  </dialog>
+
+  <dialog id="msgDialog">
+    <h2 id="msgTitle"></h2>
+    <p id="msgText"></p>
     <form method="dialog"><button class="btn primary">OK</button></form>
   </dialog>
 

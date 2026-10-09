@@ -27,8 +27,10 @@ import { colors } from './src/ui/theme';
 const SIZES = [
   { label: 'Auto', value: 'auto', max: 1280 },
   { label: '720p', value: '1280x720', max: 1280 },
+  { label: '720p vertical', value: '720x1280', max: 1280 },
   { label: '1080p', value: '1920x1080', max: 1920 },
-  { label: '9:16', value: '720x1280', max: 1280 },
+  { label: '1080p vertical', value: '1080x1920', max: 1920 },
+  { label: '4:5', value: '1080x1350', max: 1350 },
   { label: '1:1', value: '1080x1080', max: 1080 }
 ];
 const FPS = [24, 30, 60];

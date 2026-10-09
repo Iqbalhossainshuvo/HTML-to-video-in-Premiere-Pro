@@ -51,11 +51,24 @@
     <label>Resolution
       <select id="resolution">
         <option value="auto">Auto (the page's own stage size)</option>
-        <option value="1920x1080">1920 × 1080 (Full HD)</option>
-        <option value="1280x720">1280 × 720 (HD)</option>
-        <option value="3840x2160">3840 × 2160 (4K)</option>
-        <option value="1080x1920">1080 × 1920 (Vertical)</option>
-        <option value="1080x1080">1080 × 1080 (Square)</option>
+        <optgroup label="Landscape">
+          <option value="1920x1080">1920 × 1080 (Full HD)</option>
+          <option value="1280x720">1280 × 720 (HD)</option>
+          <option value="2560x1440">2560 × 1440 (2K)</option>
+          <option value="3840x2160">3840 × 2160 (4K)</option>
+          <option value="1350x1080">1350 × 1080 (5:4)</option>
+        </optgroup>
+        <optgroup label="Vertical">
+          <option value="1080x1920">1080 × 1920 (Full HD vertical)</option>
+          <option value="720x1280">720 × 1280 (HD vertical)</option>
+          <option value="1440x2560">1440 × 2560 (2K vertical)</option>
+          <option value="2160x3840">2160 × 3840 (4K vertical)</option>
+          <option value="1080x1350">1080 × 1350 (4:5 portrait)</option>
+        </optgroup>
+        <optgroup label="Square">
+          <option value="1080x1080">1080 × 1080 (Square)</option>
+          <option value="2160x2160">2160 × 2160 (4K square)</option>
+        </optgroup>
         <option value="custom">Custom…</option>
       </select>
     </label>

@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest Version="7.0"
     ExtensionBundleId="com.iqbalhossain.htmltovideo"
-    ExtensionBundleVersion="1.0.0"
+    ExtensionBundleVersion="1.0.3"
     ExtensionBundleName="HTML to Video"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
     <Extension Id="com.iqbalhossain.htmltovideo.panel" Version="1.0.0"/>
+    <Extension Id="com.iqbalhossain.htmltovideo.agent" Version="1.0.0"/>
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
@@ -47,6 +48,35 @@
               <Height>360</Height>
               <Width>240</Width>
             </MinSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+    <!-- Invisible helper: opens videos sent from the HTML to Video desktop app -->
+    <Extension Id="com.iqbalhossain.htmltovideo.agent">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./agent.html</MainPath>
+          <ScriptPath>./jsx/host.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--enable-nodejs</Parameter>
+            <Parameter>--mixed-context</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>false</AutoVisible>
+          <StartOn>
+            <Event>com.adobe.csxs.events.ApplicationActivate</Event>
+            <Event>applicationActivate</Event>
+          </StartOn>
+        </Lifecycle>
+        <UI>
+          <Type>Custom</Type>
+          <Geometry>
+            <Size>
+              <Height>1</Height>
+              <Width>1</Width>
+            </Size>
           </Geometry>
         </UI>
       </DispatchInfo>

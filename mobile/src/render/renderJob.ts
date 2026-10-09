@@ -97,18 +97,16 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
   let duration = Number(opts.duration);
   if (!(duration > 0)) {
     host.progress({ stage: 'probe', message: 'Measuring animation length…' });
-    const declared = await host.evalPage<number>('__h2v.declaredDuration()');
-    if (declared > 0) {
-      duration = declared;
-    } else {
-      // up to 5 minutes of animation are measured; longer: type the length
-      const p = await host.evalPage<{ lastActivity: number; minCycle: number; looping: boolean }>(
-        '__h2v.probe(300000, 100)', 20 * 60 * 1000);
-      if (p.looping) duration = p.minCycle > 0 ? p.minCycle / 1000 : 10;
-      else duration = Math.max(p.lastActivity + 1000, p.minCycle, 1000) / 1000;
-      duration = Math.min(duration, 3600);
-      await load(); // start again at t = 0
-    }
+    // up to 5 minutes of animation are measured; longer: type the length
+    const m = await host.evalPage<{ duration: number; how: string; probed?: boolean }>(
+      '__h2v.measure(300000, 100)', 20 * 60 * 1000);
+    duration = Math.min(m.duration, 3600);
+    const secs = duration.toFixed(duration % 1 ? 1 : 0) + ' s';
+    host.progress({
+      stage: 'info',
+      message: 'Length: ' + secs + (m.how === 'loop' ? ' (one cycle of an endless animation)' : m.how === 'declared' ? ' (set by the page)' : '')
+    });
+    if (m.probed) await load(); // start again at t = 0
   }
   check();
 

@@ -320,12 +320,14 @@
 
   // Length the page says it has, in seconds (0 = unknown): H2V_DURATION,
   // <meta name="h2v-duration">, DURATION / DURATION_MS / TOTAL / TOTAL_MS
-  function declaredDuration() {
+  // explicitOnly: just H2V_DURATION / the meta tag (made for this tool)
+  function declaredDuration(explicitOnly) {
     function g(n) { try { return (0, eval)(n); } catch (e) { return undefined; } }
     var v;
     if ((v = Number(window.H2V_DURATION)) > 0) return v;
     var m = document.querySelector('meta[name="h2v-duration"]');
     if (m && (v = Number(m.content)) > 0) return v;
+    if (explicitOnly) return 0;
     if ((v = Number(g('DURATION_MS'))) > 0 || (v = Number(g('TOTAL_MS'))) > 0) return v / 1000;
     if ((v = Number(g('DURATION'))) > 0 || (v = Number(g('TOTAL'))) > 0) return v > 600 ? v / 1000 : v;
     return 0;
@@ -357,6 +359,15 @@
       await setTime(t, true);
       hasCanvas = hasCanvas || !!document.querySelector('canvas');
       var busy = hadRaf && hasCanvas;
+      // A requestAnimationFrame loop or a setInterval can drive scenes that
+      // hold still for a while between changes: wait longer before deciding
+      // the animation has ended.
+      var idleNeed = 2500;
+      if (hadRaf) idleNeed = 12000;
+      for (var r in timers) {
+        var rep = timers[r].repeat;
+        if (rep && rep <= 30000) idleNeed = Math.max(idleNeed, rep * 1.5 + 500);
+      }
       var list = document.getAnimations ? document.getAnimations() : [];
       for (var i = 0; i < list.length; i++) {
         var a = list[i];
@@ -383,12 +394,32 @@
       if (gEnd > 0 && now / 1000 < gEnd) busy = true;
       if (busy) activity = now;
       var last = Math.max(activity, lastMutation);
-      if (t - last >= 2500) break;
+      if (t - last >= idleNeed) break;
     }
     mo.disconnect();
     var lastAct = Math.max(activity, lastMutation);
     if (t > maxMs) looping = true;
     return { lastActivity: lastAct, minCycle: minCycle, looping: looping };
+  }
+
+  // The video length (seconds) and how it was found. A length the page
+  // declares in a general variable (DURATION, TOTAL…) is checked against
+  // the measured one, since it can also mean the length of a single scene.
+  async function measure(maxMs, stepMs) {
+    var explicit = declaredDuration(true);
+    if (explicit > 0) return { duration: explicit, how: 'declared' };
+    var declared = declaredDuration(false);
+    var p = await probe(maxMs, stepMs);
+    var measured, how;
+    if (p.looping) {
+      measured = p.minCycle > 0 ? p.minCycle / 1000 : 10; // one cycle of an endless loop
+      how = 'loop';
+    } else {
+      measured = Math.max(p.lastActivity + 1000, p.minCycle, 1000) / 1000;
+      how = 'measured';
+    }
+    if (declared > 0 && (p.looping || declared >= measured - 0.5)) return { duration: declared, how: 'declared', probed: true };
+    return { duration: Math.min(measured, 3600), how: how, probed: true };
   }
 
   /* ------------------------------------------------------------------ */
@@ -831,6 +862,7 @@
   window.__h2v = {
     setTime: setTime,
     probe: probe,
+    measure: measure,
     declaredDuration: declaredDuration,
     configure: configure,
     prepare: prepare,

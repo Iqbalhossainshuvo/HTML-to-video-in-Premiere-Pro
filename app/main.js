@@ -37,17 +37,50 @@ function alert(msg) {
 
 process.on('uncaughtException', (e) => alert('Unexpected error: ' + (e && e.stack || e)));
 
+// A browser profile kept between starts (a new one each time is slow to
+// create). If another copy of the app is using it, the next one is used.
+function profileDir() {
+  const base = path.join(os.homedir(), '.html-to-video', 'window');
+  for (let i = 1; i < 10; i++) {
+    const dir = path.join(base, String(i));
+    if (!profileInUse(dir)) return { dir, keep: true };
+  }
+  return { dir: fs.mkdtempSync(path.join(os.tmpdir(), 'h2v-app-')), keep: false };
+}
+
+function profileInUse(dir) {
+  if (process.platform === 'win32') {
+    const lock = path.join(dir, 'lockfile');
+    if (!fs.existsSync(lock)) return false;
+    try { fs.rmSync(lock); return false; } catch (e) { return true; } // locked while the browser runs
+  }
+  try {
+    const target = fs.readlinkSync(path.join(dir, 'SingletonLock')); // "host-pid"
+    const pid = Number(target.split('-').pop());
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 function openWindow(url, browser) {
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'h2v-app-'));
+  const profile = profileDir();
+  fs.mkdirSync(profile.dir, { recursive: true });
   const args = [
     '--app=' + url,
-    '--user-data-dir=' + profile,
+    '--user-data-dir=' + profile.dir,
     '--window-size=1280,820',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-extensions',
     '--disable-sync',
-    '--disable-features=Translate,MediaRouter',
+    '--disable-background-networking',
+    '--disable-component-update',
+    '--disable-default-apps',
+    '--disable-session-crashed-bubble',
+    '--hide-crash-restore-bubble',
+    '--disable-features=Translate,MediaRouter,OptimizationHints',
     '--autoplay-policy=no-user-gesture-required'
   ];
   if (process.platform === 'linux' && process.getuid && process.getuid() === 0) args.push('--no-sandbox');
@@ -78,10 +111,14 @@ async function main() {
   }
 
   const win = openWindow(server.url, browser);
+  // get the file dialogs ready while the window opens
+  setTimeout(() => require('./dialogs').warmUp(), 1500).unref();
   const quit = () => {
     server.close();
     setTimeout(() => {
-      try { fs.rmSync(win.profile, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+      if (!win.profile.keep) {
+        try { fs.rmSync(win.profile.dir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+      }
       process.exit(0);
     }, 300);
   };

@@ -98,6 +98,13 @@ class LayerWriter {
  *   video: path of an .mp4 to write instead of layers (quality: medium|high|max)
  * @returns {Promise<object>} manifest (or { video, ... } when `video` is set)
  */
+function lengthMessage(m, seconds) {
+  const s = seconds.toFixed(seconds % 1 ? 1 : 0) + ' s';
+  if (m.how === 'declared') return 'Length: ' + s + ' (set by the page)';
+  if (m.how === 'loop') return 'Length: ' + s + ' (one cycle: this page animates forever; type a Length to make it longer)';
+  return 'Length: ' + s + ' (measured: the page stops changing there; type a Length to change it)';
+}
+
 async function render(o) {
   const opts = Object.assign({
     width: 1920, height: 1080, fps: 30, duration: 'auto',
@@ -221,17 +228,11 @@ async function render(o) {
     let needReload = false;
     if (!(duration > 0)) {
       progress({ stage: 'probe', message: 'Measuring animation length...' });
-      const declared = await evaluate('__h2v.declaredDuration()');
-      if (declared > 0) {
-        duration = declared;
-      } else {
-        // up to 5 minutes of animation are measured; longer: type the length
-        const p = await evaluate('__h2v.probe(300000, 100)');
-        if (p.looping) duration = p.minCycle > 0 ? p.minCycle / 1000 : 10; // one cycle of a loop
-        else duration = Math.max(p.lastActivity + 1000, p.minCycle, 1000) / 1000;
-        duration = Math.min(duration, 3600);
-        needReload = true;
-      }
+      // up to 5 minutes of animation are measured; longer: type the length
+      const m = await evaluate('__h2v.measure(300000, 100)');
+      duration = Math.min(m.duration, 3600);
+      needReload = !!m.probed;
+      progress({ stage: 'info', message: lengthMessage(m, duration) });
     }
     const fps = opts.fps;
     const frames = Math.max(1, Math.round(duration * fps));

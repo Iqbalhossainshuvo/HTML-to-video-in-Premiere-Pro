@@ -147,6 +147,22 @@ function h2v_applyMotion(clip, L, m, place) {
 
 /* ---------- build ---------- */
 
+// Used by the desktop app's helper: when Premiere Pro shows its Home
+// screen (no project open), create a project next to the converted files.
+function h2v_ensureProject(dir) {
+    try {
+        if (app.project && app.project.rootItem && app.project.path) return 'OK|open';
+    } catch (e) {}
+    try {
+        var f = new File(dir + '/HTML to Video.prproj');
+        for (var n = 2; f.exists; n++) f = new File(dir + '/HTML to Video ' + n + '.prproj');
+        app.newProject(f.fsName);
+        return 'OK|new';
+    } catch (e2) {
+        return 'ERROR|' + e2;
+    }
+}
+
 function h2v_build(manifestPath, target) {
     try {
         if (!app.project) return 'ERROR|Please open or create a Premiere Pro project first.';
