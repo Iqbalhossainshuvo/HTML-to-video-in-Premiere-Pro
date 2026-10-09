@@ -4,6 +4,10 @@
  * turns the captured frames into an MP4 with the browser's own encoders
  * (WebCodecs: H.264 + AAC, falling back to VP9/AV1 + Opus) and mp4-muxer.
  * Finished pieces of the file are handed back to Node by drain().
+ *
+ * Mobile app (collect: true): the whole MP4 is kept here and read back in
+ * base64 pieces with piece(i). Without WebCodecs (older phones) it falls
+ * back to MediaRecorder on a canvas (MP4 where supported, else WebM).
  */
 (function () {
   'use strict';
@@ -13,6 +17,13 @@
   var cfg = null;
   var chunks = [];
   var failure = null;
+  var mem = null;       // collect mode: growing file buffer
+  var memSize = 0;
+  var result = null;    // collect mode: finished file
+  var rec = null;       // MediaRecorder fallback
+  var PIECE = 3 * 256 * 1024; // multiple of 3, so base64 pieces can be joined
+  var fitCanvas = null;
+  var fitCtx = null;
 
   function toB64(u8) {
     var s = '';
@@ -27,6 +38,17 @@
     var u8 = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
     return u8;
+  }
+
+  function store(data, position) {
+    var end = position + data.length;
+    if (!mem || end > mem.length) {
+      var grown = new Uint8Array(Math.max(end, mem ? mem.length * 2 : 8 * 1024 * 1024));
+      if (mem) grown.set(mem.subarray(0, memSize));
+      mem = grown;
+    }
+    mem.set(data, position);
+    memSize = Math.max(memSize, end);
   }
 
   function drain() {
@@ -131,6 +153,7 @@
    */
   async function init(o) {
     cfg = o;
+    if (typeof VideoEncoder === 'undefined' || o.forceRecorder) return initRecorder(o);
     var video = await pickVideo(o.width, o.height, o.fps, o.bitrate);
     var rate = 48000;
     var audio = null;
@@ -142,7 +165,10 @@
     }
     var options = {
       target: new Mp4Muxer.StreamTarget({
-        onData: function (data, position) { chunks.push({ p: position, d: toB64(data) }); },
+        onData: function (data, position) {
+          if (o.collect) store(data, position);
+          else chunks.push({ p: position, d: toB64(data) });
+        },
         chunked: true,
         chunkSize: 4 * 1024 * 1024
       }),
@@ -159,7 +185,69 @@
     });
     venc.configure(video.config);
     if (audio) await encodeAudio(rendered, audio);
-    return { video: video.config.codec, audio: audio ? audio.config.codec : null };
+    return { video: video.config.codec, audio: audio ? audio.config.codec : null, mime: 'video/mp4' };
+  }
+
+  /* ---- fallback: MediaRecorder on a canvas ----
+   * MediaRecorder stamps frames with the real clock, and capturing a frame
+   * is slower than playing it. So the (small, compressed) pictures are kept
+   * and played into the recorder at the exact frame rate in finish(). */
+  var recFrames = [];
+  var canvas = null;
+  var ctx2d = null;
+  var track = null;
+  var recChunks = [];
+  var recStart = 0;
+
+  function initRecorder(o) {
+    if (typeof MediaRecorder === 'undefined') throw new Error('This device cannot encode video.');
+    canvas = document.createElement('canvas');
+    canvas.width = o.width;
+    canvas.height = o.height;
+    ctx2d = canvas.getContext('2d');
+    var stream = canvas.captureStream(0);
+    track = stream.getVideoTracks()[0];
+    var types = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    var mime = '';
+    for (var i = 0; i < types.length; i++) {
+      if (MediaRecorder.isTypeSupported(types[i])) { mime = types[i]; break; }
+    }
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: o.bitrate } : {});
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) recChunks.push(e.data); };
+    recFrames = [];
+    return { video: rec.mimeType || mime || 'MediaRecorder', audio: null, mime: (rec.mimeType || mime || 'video/webm').split(';')[0] };
+  }
+
+  async function recorderFinish() {
+    rec.start();
+    recStart = performance.now();
+    var next = recFrames.length ? createImageBitmap(recFrames[0]) : null;
+    for (var i = 0; i < recFrames.length; i++) {
+      var bmp = await next;
+      next = i + 1 < recFrames.length ? createImageBitmap(recFrames[i + 1]) : null;
+      var due = recStart + (i * 1000) / cfg.fps;
+      while (performance.now() < due) await new Promise(function (r) { setTimeout(r, 1); });
+      ctx2d.drawImage(bmp, 0, 0, cfg.width, cfg.height);
+      if (track.requestFrame) track.requestFrame();
+      bmp.close();
+    }
+    var end = recStart + (recFrames.length * 1000) / cfg.fps;
+    while (performance.now() < end) await new Promise(function (r) { setTimeout(r, 1); });
+    recFrames = [];
+    return new Promise(function (resolve) {
+      rec.onstop = function () {
+        new Blob(recChunks, { type: rec.mimeType }).arrayBuffer().then(function (buf) {
+          result = new Uint8Array(buf);
+          resolve({ size: result.length, pieces: Math.ceil(result.length / PIECE) });
+        });
+      };
+      rec.stop();
+    });
+  }
+
+  // collect mode: the finished file in base64 pieces
+  function piece(i) {
+    return toB64(result.subarray(i * PIECE, Math.min(result.length, (i + 1) * PIECE)));
   }
 
   function waitQueue() {
@@ -175,9 +263,26 @@
   async function frame(b64, index, type) {
     if (failure) throw failure;
     var blob = new Blob([fromB64(b64)], { type: type || 'image/png' });
+    if (rec) {
+      recFrames[index] = blob;
+      return [];
+    }
     var bmp = await createImageBitmap(blob);
+    var source = bmp;
+    if (bmp.width !== cfg.width || bmp.height !== cfg.height) {
+      // a phone's screen capture can be a pixel off the video size
+      if (!fitCanvas) {
+        fitCanvas = document.createElement('canvas');
+        fitCanvas.width = cfg.width;
+        fitCanvas.height = cfg.height;
+        fitCtx = fitCanvas.getContext('2d');
+        fitCtx.imageSmoothingQuality = 'high';
+      }
+      fitCtx.drawImage(bmp, 0, 0, cfg.width, cfg.height);
+      source = fitCanvas;
+    }
     var us = 1e6 / cfg.fps;
-    var vf = new VideoFrame(bmp, { timestamp: Math.round(index * us), duration: Math.round(us) });
+    var vf = new VideoFrame(source, { timestamp: Math.round(index * us), duration: Math.round(us) });
     venc.encode(vf, { keyFrame: index % Math.max(1, Math.round(cfg.fps * 2)) === 0 });
     vf.close();
     bmp.close();
@@ -186,11 +291,17 @@
   }
 
   async function finish() {
+    if (rec) return recorderFinish();
     await venc.flush();
     venc.close();
     muxer.finalize();
+    if (cfg.collect) {
+      if (failure) throw failure;
+      result = mem.subarray(0, memSize);
+      return { size: result.length, pieces: Math.ceil(result.length / PIECE) };
+    }
     return drain();
   }
 
-  window.__enc = { init: init, frame: frame, finish: finish, drain: drain };
+  window.__enc = { init: init, frame: frame, finish: finish, drain: drain, piece: piece };
 })();

@@ -8,10 +8,12 @@ web browser. **Works fully offline.** Two ways to use it:
 | | For whom | What you get |
 |---|---|---|
 | **[HTMLtoVideo.exe](#desktop-app-htmltovideoexe)**: desktop app | You just want the video | Open an HTML file, **Render video**, watch it in the built-in player, click **⬇** to save the **MP4** to a folder |
+| **[Mobile app](mobile/README.md)** (Android / iOS, React Native + Expo) | You're on your phone | Choose an HTML (or .zip), **Render video**, watch it in the player, tap **⬇** to save it to the Gallery |
 | **[Premiere Pro / After Effects plugin](#premiere-pro--after-effects-plugin)** | You want to edit it | **Every object and icon on its own track/layer**, movement as real **Position / Scale / Rotation / Opacity keyframes** |
 
-Both use the same rendering engine, and both need only Google Chrome or Microsoft
-Edge on the computer (Edge comes with Windows 10/11).
+All of them use the same rendering engine. On a computer they need only Google
+Chrome or Microsoft Edge (Edge comes with Windows 10/11); the mobile app uses the
+phone's own browser engine and video encoder.
 
 ## Desktop app (HTMLtoVideo.exe)
 

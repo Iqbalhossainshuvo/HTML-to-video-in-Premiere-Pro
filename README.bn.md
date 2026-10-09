@@ -13,6 +13,14 @@
 
 দরকার শুধু Google Chrome বা Microsoft Edge (Windows 10/11-এ Edge আগে থেকেই থাকে)।
 
+## মোবাইল অ্যাপ (Android / iOS)
+
+1. Releases থেকে `HTMLtoVideo-Android.apk` ডাউনলোড করে ফোনে ইনস্টল করুন।
+2. HTML ফাইল (অথবা HTML + ছবি/ফন্ট/সাউন্ড সহ `.zip`) বেছে নিন, Size / Frame rate বেছে **Render video** চাপুন।
+3. ভিডিও প্লেয়ারে চলবে, ব্রাউজারে যেমন দেখায় ঠিক তেমন। প্লেয়ারের উপরের **⬇** চাপলে ভিডিও Gallery / Photos-এ সেভ হবে, **⇪** দিয়ে শেয়ার করা যায়।
+
+বিস্তারিত: [mobile/README.md](mobile/README.md)
+
 ## ২. এডিট করতে চাইলে: Premiere Pro / After Effects প্লাগিন
 
 1. `scripts\install-win.bat` (Windows) বা `bash scripts/install-mac.sh` (Mac) চালান।

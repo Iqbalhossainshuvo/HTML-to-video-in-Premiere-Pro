@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "HTML to Video",
+    "slug": "html-to-video",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.iqbalhossain.htmltovideo",
+      "infoPlist": {
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#5b6cf5",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.iqbalhossain.htmltovideo"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-video",
+      "expo-sharing",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "HTML to Video saves the videos you render to your photo library.",
+          "savePhotosPermission": "HTML to Video saves the videos you render to your photo library.",
+          "isAccessMediaLocationEnabled": false,
+          "granularPermissions": [
+            "video"
+          ]
+        }
+      ],
+      "expo-document-picker"
+    ],
+    "backgroundColor": "#17181b",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#17181b"
+    }
+  }
+}
