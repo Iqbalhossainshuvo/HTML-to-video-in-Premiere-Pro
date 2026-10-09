@@ -6,14 +6,13 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { File } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions
+  Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { type Job, outputFile, prepareJob, removeJob } from './src/render/job';
@@ -22,17 +21,18 @@ import { RenderStage, type StageHandle } from './src/render/RenderStage';
 import { Player } from './src/ui/Player';
 import { colors } from './src/ui/theme';
 
+// Auto: the page's own stage size, video up to 1280 px (light on memory)
 const SIZES = [
-  { label: 'Auto', value: 'auto' },
-  { label: '720p', value: '1280x720' },
-  { label: '1080p', value: '1920x1080' },
-  { label: '9:16', value: '1080x1920' },
-  { label: '1:1', value: '1080x1080' }
+  { label: 'Auto', value: 'auto', max: 1280 },
+  { label: '720p', value: '1280x720', max: 1280 },
+  { label: '1080p', value: '1920x1080', max: 1920 },
+  { label: '9:16', value: '720x1280', max: 1280 },
+  { label: '1:1', value: '1080x1080', max: 1080 }
 ];
 const FPS = [24, 30, 60];
 
 type Picked = { uri: string; name: string };
-type Video = RenderResult & { uri: string };
+type Video = RenderResult & { uri: string; title: string };
 
 function Chip({ label, selected, onPress, disabled }: { label: string; selected: boolean; onPress: () => void; disabled?: boolean }) {
   return (
@@ -102,7 +102,8 @@ function Main() {
       const s = await waitForStage();
       const part = outputFile(current.title, 'part');
       const host: RenderHost = {
-        loadPage: (w, h) => s.loadPage(w, h),
+        loadPage: (w, h, ow, oh) => s.loadPage(w, h, ow, oh),
+        preview: (picture) => s.preview(picture),
         evalPage: (e) => s.evalPage(e),
         capture: () => s.capture(),
         loadEncoder: () => s.loadEncoder(),
@@ -123,12 +124,14 @@ function Main() {
       };
       const [w, h] = size === 'auto' ? ['auto', 'auto'] as const : size.split('x').map(Number);
       const secs = parseFloat(duration);
+      const maxOutput = SIZES.find((x) => x.value === size)?.max ?? 1280;
       const result = await renderVideo(host, {
-        width: w, height: h, fps, duration: secs > 0 ? secs : 'auto', quality: 'high', captureType: 'image/jpeg'
+        width: w, height: h, fps, duration: secs > 0 ? secs : 'auto', quality: 'high',
+        captureType: 'image/jpeg', maxOutput
       });
       const final = outputFile(current.title, result.mime === 'video/webm' ? 'webm' : 'mp4');
       part.move(final);
-      setVideo({ ...result, uri: final.uri });
+      setVideo({ ...result, uri: final.uri, title: current.title });
       setNotice({ text: `Done: ${result.width}×${result.height}, ${result.duration.toFixed(1)} s`, kind: 'ok' });
     } catch (e: any) {
       const msg = String(e?.message || e);
@@ -141,17 +144,28 @@ function Main() {
     }
   }
 
+  // Download: choose a folder (Android's own folder picker), the video is
+  // saved there. Needs no photo/gallery permission.
   async function download() {
     if (!video || saving) return;
     setSaving(true);
     try {
-      const perm = await MediaLibrary.requestPermissionsAsync(true);
-      if (!perm.granted) {
-        Alert.alert('Permission needed', 'Allow access to Photos / Gallery to save the video.');
-        return;
+      let dir: Directory;
+      try {
+        dir = await Directory.pickDirectoryAsync();
+      } catch (e: any) {
+        if (/cancel/i.test(String(e?.message || e) + String(e?.code || ''))) return;
+        if (Platform.OS !== 'android') {
+          await share(); // iOS: the share sheet has "Save Video" / "Save to Files"
+          return;
+        }
+        throw e;
       }
-      await MediaLibrary.Asset.create(video.uri);
-      setNotice({ text: 'Saved to your Gallery / Photos.', kind: 'ok' });
+      const src = new File(video.uri);
+      const base = `${video.title}.${src.extension.replace(/^\./, '') || 'mp4'}`;
+      const dest = dir.createFile(base, video.mime);
+      dest.write(await src.bytes());
+      setNotice({ text: `Saved: ${dest.name || base}`, kind: 'ok' });
     } catch (e: any) {
       setNotice({ text: 'Could not save: ' + String(e?.message || e), kind: 'err' });
     } finally {

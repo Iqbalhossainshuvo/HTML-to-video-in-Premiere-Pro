@@ -26,7 +26,7 @@ esbuild.buildSync({
   },
   bundle: true, platform: 'node', format: 'cjs', outfile: bundle, logLevel: 'warning'
 });
-const { renderVideo, instrumentHtml, PAGE_RUNTIME_JS, RUNTIME_FILE, ENCODER_HTML, rpcScript } = require(bundle);
+const { renderVideo, instrumentHtml, PAGE_RUNTIME_JS, RUNTIME_FILE, ENCODER_HTML, rpcScript, webviewSize } = require(bundle);
 
 (async () => {
   const br = await chrome.launch({ width: 800, height: 800 });
@@ -78,12 +78,14 @@ const { renderVideo, instrumentHtml, PAGE_RUNTIME_JS, RUNTIME_FILE, ENCODER_HTML
   }
   let first = true;
   const host = {
-    async loadPage(w, h) {
-      fs.writeFileSync(main, instrumentHtml(original, w, h, 1 / PR));
+    async loadPage(w, h, outW) {
+      // same sizing as the app's RenderStage
+      const size = webviewSize(w, h, outW, PR);
+      fs.writeFileSync(main, instrumentHtml(original, w, h, size.scale));
       await page.s('Emulation.setDeviceMetricsOverride',
-        { width: Math.round(w / PR), height: Math.round(h / PR), deviceScaleFactor: PR, mobile: true });
+        { width: Math.round(size.dpW), height: Math.round(size.dpH), deviceScaleFactor: PR, mobile: true });
       const r = await page.load(pathToFileURL(main).href);
-      console.log(`  page ready: viewport ${r.w}×${r.h} CSS px`);
+      console.log(`  page ready: viewport ${r.w}×${r.h} CSS px, WebView ${Math.round(size.dpW)}×${Math.round(size.dpH)} dp`);
     },
     evalPage: (e) => page.eval(e),
     async capture() {
@@ -106,7 +108,8 @@ const { renderVideo, instrumentHtml, PAGE_RUNTIME_JS, RUNTIME_FILE, ENCODER_HTML
   const sizeOpt = size === 'auto' ? ['auto', 'auto'] : size.split('x').map(Number);
   const t0 = Date.now();
   const r = await renderVideo(host, {
-    width: sizeOpt[0], height: sizeOpt[1], fps: Number(fpsArg), duration: 'auto', quality: 'high'
+    width: sizeOpt[0], height: sizeOpt[1], fps: Number(fpsArg), duration: 'auto', quality: 'high',
+    maxOutput: Number(process.env.MAX_OUTPUT || 1280)
   });
   console.log('RESULT', JSON.stringify(r), 'in', ((Date.now() - t0) / 1000).toFixed(1) + 's');
   void first;

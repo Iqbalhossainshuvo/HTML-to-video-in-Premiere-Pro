@@ -320,7 +320,9 @@
     var hasCanvas = false;
     var looping = false;
     var t = 0;
-    for (; t <= maxMs; t += stepMs) {
+    for (var step = 0; t <= maxMs; t += stepMs, step++) {
+      // let the browser breathe (phones): a real pause every 10 steps
+      if (step % 10 === 9) await new Promise(function (r) { realSetTimeout(r, 0); });
       var hadRaf = Object.keys(rafCbs).length > 0;
       await setTime(t, true);
       hasCanvas = hasCanvas || !!document.querySelector('canvas');

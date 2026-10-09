@@ -2,7 +2,7 @@
 
 Choose an **HTML file** on your phone and get a **video** of it: it plays in the
 built-in player exactly like it plays in a browser, and the **download button**
-on top of the player saves it to your Gallery / Photos.
+on top of the player saves it to a folder you choose.
 
 ```
 ┌──────────────────────────────┐
@@ -25,11 +25,14 @@ on top of the player saves it to your Gallery / Photos.
 1. **Choose a file**: an `.html` file, or a **`.zip`** containing the HTML plus its
    pictures, fonts, sounds and scripts (folders are kept; `index.html` is used
    if there are several HTML files).
-2. Pick the size (*Auto* finds the page's own stage, e.g. 1920×1080), frame
+2. Pick the size (*Auto* finds the page's own stage, e.g. 1920×1080, and makes a
+   video up to 1280 px wide, which is light on the phone's memory; *1080p* for full HD), frame
    rate and length (*Auto* reads `const DURATION = …` from the page or measures
    the animation), then tap **Render video**. The page is shown while it renders.
-3. The video plays in the player. Tap **⬇** to save it to the Gallery / Photos
-   (the app asks once for permission), or **⇪** to share it or save it to Files.
+3. The video plays in the player. Tap **⬇**, choose a folder (e.g. *Movies* or
+   *Download*), and the video is saved there; it then shows up in the Gallery too.
+   **⇪** shares it (or saves it to Files on iPhone). The app needs no photo or
+   storage permission.
 
 To **edit** the animation object by object, use the Premiere Pro / After
 Effects plugin in this repository with the same HTML file.

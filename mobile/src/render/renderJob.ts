@@ -10,8 +10,11 @@
 export type Progress = { stage: string; message: string; fraction?: number; eta?: number };
 
 export interface RenderHost {
-  /** (Re)loads the page with a viewport of w × h CSS pixels; resolves when ready. */
-  loadPage(w: number, h: number): Promise<void>;
+  /**
+   * (Re)loads the page with a layout viewport of w × h CSS pixels (the
+   * page's own size), captured at about outW × outH pixels; resolves when ready.
+   */
+  loadPage(w: number, h: number, outW: number, outH: number): Promise<void>;
   evalPage<T = unknown>(expr: string): Promise<T>;
   /** One picture of the page as it looks now (base64 JPEG or PNG). */
   capture(): Promise<string>;
@@ -20,6 +23,8 @@ export interface RenderHost {
   evalEncoder<T = unknown>(expr: string): Promise<T>;
   /** base64 of a local file referenced by the page (sound), or null. */
   readFileBase64(url: string): Promise<string | null>;
+  /** Optional: shows a captured frame while rendering. */
+  preview?(picture: string, frame: number): void;
   /** Writes the next piece of the output file (base64). */
   appendOutput(b64: string, first: boolean): Promise<void>;
   progress(p: Progress): void;
@@ -35,6 +40,8 @@ export interface RenderOptions {
   duration: number | 'auto';
   quality: Quality;
   captureType?: string; // mime type of host.capture() pictures
+  /** Largest output side in pixels (phones: keeps memory use low). */
+  maxOutput?: number;
 }
 
 export interface RenderResult {
@@ -69,18 +76,29 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
   const auto = opts.width === 'auto' || opts.height === 'auto';
   let W = auto ? 1920 : even(Number(opts.width));
   let H = auto ? 1080 : even(Number(opts.height));
+  // output size: the page's size, scaled down to fit maxOutput
+  let OW = W;
+  let OH = H;
+  const fitOutput = () => {
+    const k = Math.min(1, (opts.maxOutput || Infinity) / Math.max(W, H));
+    OW = even(W * k);
+    OH = even(H * k);
+  };
+  fitOutput();
+  const load = () => host.loadPage(W, H, OW, OH);
 
   host.progress({ stage: 'load', message: 'Loading the page…', fraction: 0 });
-  await host.loadPage(W, H);
+  await load();
 
   if (auto) {
     const st = await host.evalPage<{ w: number; h: number } | null>('__h2v.findStage()');
     if (st && (st.w !== W || st.h !== H)) {
       W = even(st.w);
       H = even(st.h);
-      await host.loadPage(W, H);
+      fitOutput();
+      await load();
     }
-    host.progress({ stage: 'info', message: st ? `Stage found: ${W}×${H}` : 'Using 1920×1080' });
+    host.progress({ stage: 'info', message: (st ? `Stage found: ${W}×${H}` : `Using ${W}×${H}`) + ` → video ${OW}×${OH}` });
   }
   check();
 
@@ -92,11 +110,11 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
       duration = declared;
     } else {
       const p = await host.evalPage<{ lastActivity: number; minCycle: number; looping: boolean }>(
-        '__h2v.probe(30000, 50)');
+        '__h2v.probe(20000, 50)');
       if (p.looping) duration = p.minCycle > 0 ? p.minCycle / 1000 : 10;
       else duration = Math.max(p.lastActivity + 1000, p.minCycle, 1000) / 1000;
       duration = Math.min(duration, 60);
-      await host.loadPage(W, H); // start again at t = 0
+      await load(); // start again at t = 0
     }
   }
   check();
@@ -104,7 +122,7 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
   const fps = opts.fps;
   const frames = Math.max(1, Math.round(duration * fps));
   const bpp = { medium: 0.08, high: 0.14, max: 0.25 }[opts.quality] ?? 0.14;
-  const bitrate = Math.round(Math.min(40e6, Math.max(1.5e6, W * H * fps * bpp)));
+  const bitrate = Math.round(Math.min(40e6, Math.max(1.5e6, OW * OH * fps * bpp)));
 
   await host.loadEncoder();
   let codecs: { video: string; audio: string | null; mime: string } | null = null;
@@ -123,11 +141,12 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
         else host.progress({ stage: 'warn', message: 'Sound not found: ' + a.src });
       }
       codecs = await host.evalEncoder(`__enc.init(${JSON.stringify({
-        width: W, height: H, fps, bitrate, frames, audio, collect: true
+        width: OW, height: OH, fps, bitrate, frames, audio, collect: true
       })})`);
       host.progress({ stage: 'info', message: 'Encoding ' + codecs!.video + (codecs!.audio ? ' + ' + codecs!.audio : '') });
     }
     const picture = await host.capture();
+    if (host.preview && (f % 3 === 0 || f === frames - 1)) host.preview(picture, f);
     await host.evalEncoder(`__enc.frame(${JSON.stringify(picture)}, ${f}, ${JSON.stringify(opts.captureType || 'image/jpeg')})`);
     const elapsed = (Date.now() - started) / 1000;
     host.progress({
@@ -144,9 +163,9 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
     const piece = await host.evalEncoder<string>(`__enc.piece(${i})`);
     await host.appendOutput(piece, i === 0);
   }
-  host.progress({ stage: 'done', message: `Video ready: ${frames} frames, ${W}×${H} @ ${fps} fps`, fraction: 1 });
+  host.progress({ stage: 'done', message: `Video ready: ${frames} frames, ${OW}×${OH} @ ${fps} fps`, fraction: 1 });
   return {
-    width: W, height: H, fps, frames, duration: frames / fps,
+    width: OW, height: OH, fps, frames, duration: frames / fps,
     codec: codecs!.video, audio: codecs!.audio, mime: codecs!.mime, size: out.size
   };
 }

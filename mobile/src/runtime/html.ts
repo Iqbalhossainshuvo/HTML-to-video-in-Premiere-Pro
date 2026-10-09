@@ -76,3 +76,14 @@ export function rpcScript(id: number, expr: string): string {
     ' window.ReactNativeWebView.postMessage(JSON.stringify(r)); })(); true;'
   );
 }
+
+/**
+ * Size of the page WebView (in dp) for a page laid out at w × h CSS px and
+ * captured at about outW × outH pixels on a screen with `pixelRatio`.
+ * Android WebView does not zoom out below 0.25, so the WebView is never
+ * smaller than 26% of the page; the encoder scales the picture to outW × outH.
+ */
+export function webviewSize(w: number, h: number, outW: number, pixelRatio: number) {
+  const dpW = Math.max(outW / pixelRatio, w * 0.26);
+  return { dpW, dpH: (dpW * h) / w, scale: dpW / w };
+}
