@@ -221,23 +221,15 @@ async function render(o) {
     let needReload = false;
     if (!(duration > 0)) {
       progress({ stage: 'probe', message: 'Measuring animation length...' });
-      const declared = await evaluate(`(function () {
-        function g(n) { try { return (0, eval)(n); } catch (e) { return undefined; } }
-        var v;
-        if ((v = Number(window.H2V_DURATION)) > 0) return v;
-        var m = document.querySelector('meta[name="h2v-duration"]');
-        if (m && (v = Number(m.content)) > 0) return v;
-        if ((v = Number(g('DURATION_MS'))) > 0 || (v = Number(g('TOTAL_MS'))) > 0) return v / 1000;
-        if ((v = Number(g('DURATION'))) > 0 || (v = Number(g('TOTAL'))) > 0) return v > 600 ? v / 1000 : v;
-        return 0;
-      })()`);
+      const declared = await evaluate('__h2v.declaredDuration()');
       if (declared > 0) {
         duration = declared;
       } else {
-        const p = await evaluate('__h2v.probe(30000, 50)');
+        // up to 5 minutes of animation are measured; longer: type the length
+        const p = await evaluate('__h2v.probe(300000, 100)');
         if (p.looping) duration = p.minCycle > 0 ? p.minCycle / 1000 : 10; // one cycle of a loop
         else duration = Math.max(p.lastActivity + 1000, p.minCycle, 1000) / 1000;
-        duration = Math.min(duration, 60);
+        duration = Math.min(duration, 3600);
         needReload = true;
       }
     }

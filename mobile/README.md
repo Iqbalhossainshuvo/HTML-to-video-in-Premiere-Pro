@@ -29,13 +29,24 @@ on top of the player saves it to a folder you choose.
    video up to 1280 px wide, which is light on the phone's memory; *1080p* for full HD), frame
    rate and length (*Auto* reads `const DURATION = …` from the page or measures
    the animation), then tap **Render video**. The page is shown while it renders.
-3. The video plays in the player. Tap **⬇**, choose a folder (e.g. *Movies* or
-   *Download*), and the video is saved there; it then shows up in the Gallery too.
+3. The video plays in the player. Under it, **Save to:** shows the folder the
+   video goes to (choose it once with the phone's folder picker, e.g. *Movies* or
+   *Download*; tap the row to change it). Tap **⬇** and the video is copied there
+   at once, checked to be complete, and shows up in the Gallery too.
    **⇪** shares it (or saves it to Files on iPhone). The app needs no photo or
    storage permission.
 
 To **edit** the animation object by object, use the Premiere Pro / After
 Effects plugin in this repository with the same HTML file.
+
+## Long animations
+
+The whole animation is rendered, however long it is: the length comes from
+`const DURATION = …` (or `DURATION_MS`, `TOTAL`, `<meta name="h2v-duration">`), else
+it is measured, including GSAP timelines and pauses where nothing moves (up to 5
+minutes are measured; for longer animations type the length). Frames are written
+into the video file while rendering, so a long video does not fill the phone's
+memory.
 
 ## How it renders
 

@@ -97,10 +97,12 @@ const { renderVideo, instrumentHtml, PAGE_RUNTIME_JS, RUNTIME_FILE, ENCODER_HTML
     async readFileBase64(url) {
       try { return fs.readFileSync(fileURLToPath(url)).toString('base64'); } catch (e) { return null; }
     },
-    async appendOutput(b64, isFirst) {
-      if (isFirst) fs.writeFileSync(outPath, Buffer.from(b64, 'base64'));
-      else fs.appendFileSync(outPath, Buffer.from(b64, 'base64'));
-      first = false;
+    async writeChunks(chunks) {
+      // same as the app: each piece at its byte position
+      if (first) { fs.writeFileSync(outPath, Buffer.alloc(0)); first = false; }
+      const fd = fs.openSync(outPath, 'r+');
+      for (const c of chunks) { const b = Buffer.from(c.d, 'base64'); fs.writeSync(fd, b, 0, b.length, c.p); }
+      fs.closeSync(fd);
     },
     progress(p) { if (p.stage !== 'render' || /0 \//.test(p.message)) console.log('  ' + p.message); },
     cancelled: () => false

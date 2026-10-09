@@ -301,6 +301,36 @@
   /* Duration probe                                                      */
   /* ------------------------------------------------------------------ */
 
+  // End (seconds) of everything GSAP has scheduled, or 0 (none / endless)
+  function gsapEnd() {
+    try {
+      var g = window.gsap && window.gsap.globalTimeline;
+      if (!g) return 0;
+      var end = 0;
+      var kids = g.getChildren(false, true, true);
+      for (var i = 0; i < kids.length; i++) {
+        var e = kids[i].endTime();
+        if (isFinite(e) && e < 36000 && e > end) end = e;
+      }
+      return end;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  // Length the page says it has, in seconds (0 = unknown): H2V_DURATION,
+  // <meta name="h2v-duration">, DURATION / DURATION_MS / TOTAL / TOTAL_MS
+  function declaredDuration() {
+    function g(n) { try { return (0, eval)(n); } catch (e) { return undefined; } }
+    var v;
+    if ((v = Number(window.H2V_DURATION)) > 0) return v;
+    var m = document.querySelector('meta[name="h2v-duration"]');
+    if (m && (v = Number(m.content)) > 0) return v;
+    if ((v = Number(g('DURATION_MS'))) > 0 || (v = Number(g('TOTAL_MS'))) > 0) return v / 1000;
+    if ((v = Number(g('DURATION'))) > 0 || (v = Number(g('TOTAL'))) > 0) return v > 600 ? v / 1000 : v;
+    return 0;
+  }
+
   // Runs the page forward on the virtual clock (without capturing) to see
   // when it stops changing. The renderer reloads the page afterwards.
   async function probe(maxMs, stepMs) {
@@ -347,9 +377,13 @@
       for (var k in timers) {
         if (!timers[k].repeat) { busy = true; break; }
       }
+      // GSAP timelines: still busy while tweens are scheduled ahead, even
+      // during a scene that holds still
+      var gEnd = gsapEnd();
+      if (gEnd > 0 && now / 1000 < gEnd) busy = true;
       if (busy) activity = now;
       var last = Math.max(activity, lastMutation);
-      if (t - last >= 1500) break;
+      if (t - last >= 2500) break;
     }
     mo.disconnect();
     var lastAct = Math.max(activity, lastMutation);
@@ -797,6 +831,7 @@
   window.__h2v = {
     setTime: setTime,
     probe: probe,
+    declaredDuration: declaredDuration,
     configure: configure,
     prepare: prepare,
     isolate: isolate,

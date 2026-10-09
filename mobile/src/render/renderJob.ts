@@ -15,7 +15,7 @@ export interface RenderHost {
    * page's own size), captured at about outW × outH pixels; resolves when ready.
    */
   loadPage(w: number, h: number, outW: number, outH: number): Promise<void>;
-  evalPage<T = unknown>(expr: string): Promise<T>;
+  evalPage<T = unknown>(expr: string, timeoutMs?: number): Promise<T>;
   /** One picture of the page as it looks now (base64 JPEG or PNG). */
   capture(): Promise<string>;
   /** (Re)loads the encoder page; resolves when ready. */
@@ -25,8 +25,11 @@ export interface RenderHost {
   readFileBase64(url: string): Promise<string | null>;
   /** Optional: shows a captured frame while rendering. */
   preview?(picture: string, frame: number): void;
-  /** Writes the next piece of the output file (base64). */
-  appendOutput(b64: string, first: boolean): Promise<void>;
+  /**
+   * Writes finished pieces of the video file: base64 data `d` at byte
+   * position `p`. Called while rendering, so long videos never sit in memory.
+   */
+  writeChunks(chunks: { p: number; d: string }[]): Promise<void>;
   progress(p: Progress): void;
   cancelled(): boolean;
 }
@@ -55,17 +58,6 @@ export interface RenderResult {
   mime: string;
   size: number;
 }
-
-const DECLARED_DURATION = `(function () {
-  function g(n) { try { return (0, eval)(n); } catch (e) { return undefined; } }
-  var v;
-  if ((v = Number(window.H2V_DURATION)) > 0) return v;
-  var m = document.querySelector('meta[name="h2v-duration"]');
-  if (m && (v = Number(m.content)) > 0) return v;
-  if ((v = Number(g('DURATION_MS'))) > 0 || (v = Number(g('TOTAL_MS'))) > 0) return v / 1000;
-  if ((v = Number(g('DURATION'))) > 0 || (v = Number(g('TOTAL'))) > 0) return v > 600 ? v / 1000 : v;
-  return 0;
-})()`;
 
 const even = (n: number) => Math.max(2, Math.round(n) - (Math.round(n) % 2));
 
@@ -105,15 +97,16 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
   let duration = Number(opts.duration);
   if (!(duration > 0)) {
     host.progress({ stage: 'probe', message: 'Measuring animation length…' });
-    const declared = await host.evalPage<number>(DECLARED_DURATION);
+    const declared = await host.evalPage<number>('__h2v.declaredDuration()');
     if (declared > 0) {
       duration = declared;
     } else {
+      // up to 5 minutes of animation are measured; longer: type the length
       const p = await host.evalPage<{ lastActivity: number; minCycle: number; looping: boolean }>(
-        '__h2v.probe(20000, 50)');
+        '__h2v.probe(300000, 100)', 20 * 60 * 1000);
       if (p.looping) duration = p.minCycle > 0 ? p.minCycle / 1000 : 10;
       else duration = Math.max(p.lastActivity + 1000, p.minCycle, 1000) / 1000;
-      duration = Math.min(duration, 60);
+      duration = Math.min(duration, 3600);
       await load(); // start again at t = 0
     }
   }
@@ -123,6 +116,16 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
   const frames = Math.max(1, Math.round(duration * fps));
   const bpp = { medium: 0.08, high: 0.14, max: 0.25 }[opts.quality] ?? 0.14;
   const bitrate = Math.round(Math.min(40e6, Math.max(1.5e6, OW * OH * fps * bpp)));
+
+  // every piece of the file goes through here (tracks the file size)
+  let fileSize = 0;
+  const write = async (chunks: { p: number; d: string }[]) => {
+    for (const c of chunks) {
+      const pad = c.d.endsWith('==') ? 2 : c.d.endsWith('=') ? 1 : 0;
+      fileSize = Math.max(fileSize, c.p + (c.d.length / 4) * 3 - pad);
+    }
+    if (chunks.length) await host.writeChunks(chunks);
+  };
 
   await host.loadEncoder();
   let codecs: { video: string; audio: string | null; mime: string } | null = null;
@@ -141,13 +144,15 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
         else host.progress({ stage: 'warn', message: 'Sound not found: ' + a.src });
       }
       codecs = await host.evalEncoder(`__enc.init(${JSON.stringify({
-        width: OW, height: OH, fps, bitrate, frames, audio, collect: true
+        width: OW, height: OH, fps, bitrate, frames, audio
       })})`);
       host.progress({ stage: 'info', message: 'Encoding ' + codecs!.video + (codecs!.audio ? ' + ' + codecs!.audio : '') });
     }
     const picture = await host.capture();
     if (host.preview && (f % 3 === 0 || f === frames - 1)) host.preview(picture, f);
-    await host.evalEncoder(`__enc.frame(${JSON.stringify(picture)}, ${f}, ${JSON.stringify(opts.captureType || 'image/jpeg')})`);
+    const done = await host.evalEncoder<{ p: number; d: string }[]>(
+      `__enc.frame(${JSON.stringify(picture)}, ${f}, ${JSON.stringify(opts.captureType || 'image/jpeg')})`);
+    await write(done);
     const elapsed = (Date.now() - started) / 1000;
     host.progress({
       stage: 'render',
@@ -158,14 +163,20 @@ export async function renderVideo(host: RenderHost, opts: RenderOptions): Promis
   }
 
   host.progress({ stage: 'finish', message: 'Finishing the video file…', fraction: 0.96 });
-  const out = await host.evalEncoder<{ size: number; pieces: number }>('__enc.finish()');
-  for (let i = 0; i < out.pieces; i++) {
-    const piece = await host.evalEncoder<string>(`__enc.piece(${i})`);
-    await host.appendOutput(piece, i === 0);
+  const out = await host.evalEncoder<{ p: number; d: string }[] | { size: number; pieces: number }>('__enc.finish()');
+  if (Array.isArray(out)) {
+    await write(out);
+  } else {
+    // MediaRecorder fallback: the file is made at the end, read it in pieces
+    const PIECE = 3 * 256 * 1024;
+    for (let i = 0; i < out.pieces; i++) {
+      const piece = await host.evalEncoder<string>(`__enc.piece(${i})`);
+      await write([{ p: i * PIECE, d: piece }]);
+    }
   }
   host.progress({ stage: 'done', message: `Video ready: ${frames} frames, ${OW}×${OH} @ ${fps} fps`, fraction: 1 });
   return {
     width: OW, height: OH, fps, frames, duration: frames / fps,
-    codec: codecs!.video, audio: codecs!.audio, mime: codecs!.mime, size: out.size
+    codec: codecs!.video, audio: codecs!.audio, mime: codecs!.mime, size: fileSize
   };
 }

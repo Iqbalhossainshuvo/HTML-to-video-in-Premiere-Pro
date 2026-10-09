@@ -6,7 +6,7 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { Directory, File } from 'expo-file-system';
+import { File, FileMode } from 'expo-file-system';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Sharing from 'expo-sharing';
 import { StatusBar } from 'expo-status-bar';
@@ -18,7 +18,9 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { type Job, outputFile, prepareJob, removeJob } from './src/render/job';
 import { type Progress, type RenderHost, type RenderResult, renderVideo } from './src/render/renderJob';
 import { RenderStage, type StageHandle } from './src/render/RenderStage';
+import { chooseSaveFolder, forgetSaveFolder, loadSaveFolder, saveVideo, type SaveFolder } from './src/save';
 import { Player } from './src/ui/Player';
+import { base64ToBytes } from './src/util/base64';
 import { colors } from './src/ui/theme';
 
 // Auto: the page's own stage size, video up to 1280 px (light on memory)
@@ -57,6 +59,7 @@ function Main() {
   const [video, setVideo] = useState<Video | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ text: string; kind: 'ok' | 'err' | 'info' } | null>(null);
+  const [folder, setFolder] = useState<SaveFolder | null>(() => loadSaveFolder());
   const stage = useRef<StageHandle>(null);
   const cancel = useRef(false);
   const busy = !!job;
@@ -101,10 +104,13 @@ function Main() {
       setJob(current);
       const s = await waitForStage();
       const part = outputFile(current.title, 'part');
+      part.create({ overwrite: true });
+      // the video file is written while rendering (any length, little memory)
+      const handle = part.open(FileMode.ReadWrite);
       const host: RenderHost = {
         loadPage: (w, h, ow, oh) => s.loadPage(w, h, ow, oh),
         preview: (picture) => s.preview(picture),
-        evalPage: (e) => s.evalPage(e),
+        evalPage: (e, t) => s.evalPage(e, t),
         capture: () => s.capture(),
         loadEncoder: () => s.loadEncoder(),
         evalEncoder: (e) => s.evalEncoder(e),
@@ -112,9 +118,11 @@ function Main() {
           if (!url.startsWith('file:')) return null;
           try { return await new File(decodeURI(url)).base64(); } catch { return null; }
         },
-        async appendOutput(b64, first) {
-          if (first) part.create({ overwrite: true });
-          part.write(b64, { encoding: 'base64', append: true });
+        async writeChunks(chunks) {
+          for (const c of chunks) {
+            handle.offset = c.p;
+            handle.writeBytes(base64ToBytes(c.d));
+          }
         },
         progress: (p) => {
           if (p.stage === 'warn') setNotice({ text: p.message, kind: 'info' });
@@ -125,10 +133,15 @@ function Main() {
       const [w, h] = size === 'auto' ? ['auto', 'auto'] as const : size.split('x').map(Number);
       const secs = parseFloat(duration);
       const maxOutput = SIZES.find((x) => x.value === size)?.max ?? 1280;
-      const result = await renderVideo(host, {
-        width: w, height: h, fps, duration: secs > 0 ? secs : 'auto', quality: 'high',
-        captureType: 'image/jpeg', maxOutput
-      });
+      let result: RenderResult;
+      try {
+        result = await renderVideo(host, {
+          width: w, height: h, fps, duration: secs > 0 ? secs : 'auto', quality: 'high',
+          captureType: 'image/jpeg', maxOutput
+        });
+      } finally {
+        handle.close();
+      }
       const final = outputFile(current.title, result.mime === 'video/webm' ? 'webm' : 'mp4');
       part.move(final);
       setVideo({ ...result, uri: final.uri, title: current.title });
@@ -144,28 +157,45 @@ function Main() {
     }
   }
 
-  // Download: choose a folder (Android's own folder picker), the video is
-  // saved there. Needs no photo/gallery permission.
+  async function pickFolder() {
+    try {
+      const f = await chooseSaveFolder();
+      if (f) setFolder(f);
+      return f;
+    } catch (e: any) {
+      setNotice({ text: 'Could not open the folder picker: ' + String(e?.message || e), kind: 'err' });
+      return null;
+    }
+  }
+
+  // Download: saves straight into the remembered folder (chosen once with
+  // the phone's folder picker; no photo/storage permission needed).
   async function download() {
     if (!video || saving) return;
     setSaving(true);
     try {
-      let dir: Directory;
-      try {
-        dir = await Directory.pickDirectoryAsync();
-      } catch (e: any) {
-        if (/cancel/i.test(String(e?.message || e) + String(e?.code || ''))) return;
-        if (Platform.OS !== 'android') {
-          await share(); // iOS: the share sheet has "Save Video" / "Save to Files"
+      let target = folder;
+      if (!target) {
+        target = await pickFolder();
+        if (!target) {
+          if (Platform.OS !== 'android') await share(); // iOS: "Save Video" / "Save to Files"
           return;
         }
-        throw e;
       }
-      const src = new File(video.uri);
-      const base = `${video.title}.${src.extension.replace(/^\./, '') || 'mp4'}`;
-      const dest = dir.createFile(base, video.mime);
-      dest.write(await src.bytes());
-      setNotice({ text: `Saved: ${dest.name || base}`, kind: 'ok' });
+      const ext = video.mime === 'video/webm' ? 'webm' : 'mp4';
+      try {
+        const r = await saveVideo(video.uri, `${video.title}.${ext}`, video.mime, target);
+        setNotice({ text: `Saved to ${target.name} / ${r.name} · ${(r.size / 1048576).toFixed(1)} MB`, kind: 'ok' });
+      } catch (e: any) {
+        if (/incomplete/i.test(String(e?.message))) throw e;
+        // the folder is gone or no longer allowed: choose again
+        forgetSaveFolder();
+        setFolder(null);
+        const again = await pickFolder();
+        if (!again) return;
+        const r = await saveVideo(video.uri, `${video.title}.${ext}`, video.mime, again);
+        setNotice({ text: `Saved to ${again.name} / ${r.name} · ${(r.size / 1048576).toFixed(1)} MB`, kind: 'ok' });
+      }
     } catch (e: any) {
       setNotice({ text: 'Could not save: ' + String(e?.message || e), kind: 'err' });
     } finally {
@@ -225,6 +255,15 @@ function Main() {
             </View>
           )}
         </View>
+        {video && !job && (
+          <Pressable style={styles.folderRow} onPress={pickFolder} accessibilityRole="button">
+            <Ionicons name="folder-outline" size={16} color={colors.text} />
+            <Text style={styles.folderText} numberOfLines={1}>
+              Save to: <Text style={styles.folderName}>{folder ? folder.name : 'choose a folder'}</Text>
+            </Text>
+            <Text style={styles.folderChange}>{folder ? 'Change' : 'Choose'}</Text>
+          </Pressable>
+        )}
         {video && !job && (
           <Text style={styles.videoInfo}>
             {video.width}×{video.height} · {video.fps} fps · {video.duration.toFixed(2)} s · {(video.size / 1048576).toFixed(1)} MB
@@ -319,6 +358,13 @@ const styles = StyleSheet.create({
   playerBox: { borderRadius: 10, overflow: 'hidden', backgroundColor: '#000', alignSelf: 'center' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20, gap: 10 },
   emptyText: { color: colors.muted, textAlign: 'center', lineHeight: 19 },
+  folderRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, paddingHorizontal: 12,
+    borderRadius: 8, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.line
+  },
+  folderText: { flex: 1, color: colors.muted, fontSize: 13 },
+  folderName: { color: '#fff', fontWeight: '600' },
+  folderChange: { color: colors.accent, fontWeight: '600', fontSize: 13 },
   videoInfo: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: -4 },
   progress: { gap: 6 },
   bar: { height: 6, backgroundColor: colors.panel2, borderRadius: 3, overflow: 'hidden' },

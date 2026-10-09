@@ -16,7 +16,7 @@ import { type Job, writeMain } from './job';
 
 export interface StageHandle {
   loadPage(w: number, h: number, outW: number, outH: number): Promise<void>;
-  evalPage<T = unknown>(expr: string): Promise<T>;
+  evalPage<T = unknown>(expr: string, timeoutMs?: number): Promise<T>;
   capture(): Promise<string>;
   loadEncoder(): Promise<void>;
   evalEncoder<T = unknown>(expr: string): Promise<T>;
@@ -54,7 +54,7 @@ export function RenderStage({ job, boxWidth, boxHeight, onPageError, ref }: Prop
       const timer = setTimeout(() => {
         ready.current[channel] = null;
         reject(new Error(what + ' did not load in time.'));
-      }, 60000);
+      }, 180000); // big pages (many pictures, fonts) can take a while
       ready.current[channel] = {
         resolve: () => { clearTimeout(timer); resolve(); },
         reject: (e) => { clearTimeout(timer); reject(e); }
@@ -63,7 +63,7 @@ export function RenderStage({ job, boxWidth, boxHeight, onPageError, ref }: Prop
     });
   }
 
-  function rpc<T>(channel: Channel, expr: string): Promise<T> {
+  function rpc<T>(channel: Channel, expr: string, timeoutMs = TIMEOUT): Promise<T> {
     const view = channel === 'page' ? pageRef.current : encRef.current;
     if (!view) return Promise.reject(new Error('The ' + channel + ' view is not ready.'));
     const id = nextId.current++;
@@ -71,7 +71,7 @@ export function RenderStage({ job, boxWidth, boxHeight, onPageError, ref }: Prop
       const timer = setTimeout(() => {
         pending.current.delete(id);
         reject(new Error('No answer from the ' + (channel === 'page' ? 'page' : 'encoder') + '.'));
-      }, TIMEOUT);
+      }, timeoutMs);
       pending.current.set(id, { resolve, reject, timer, channel });
       view.injectJavaScript(rpcScript(id, expr));
     });
@@ -122,7 +122,7 @@ export function RenderStage({ job, boxWidth, boxHeight, onPageError, ref }: Prop
       writeMain(job, w, h, size.scale);
       setPage((p) => ({ dpW: size.dpW, dpH: size.dpH, key: (p?.key ?? 0) + 1 }));
     }),
-    evalPage: (expr) => rpc('page', expr),
+    evalPage: (expr, timeoutMs) => rpc('page', expr, timeoutMs),
     capture: () => captureRef(shotRef, { format: 'jpg', quality: 0.9, result: 'base64' }),
     loadEncoder: () => waitReady('enc', 'The video encoder', () => setEncKey((k) => k + 1)),
     evalEncoder: (expr) => rpc('enc', expr),
