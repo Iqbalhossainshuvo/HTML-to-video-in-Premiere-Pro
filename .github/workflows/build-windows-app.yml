@@ -56,6 +56,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: HTML to Video ${{ inputs.release_tag || github.ref_name }}
           body: |
+            **HTMLtoVideo-Android.apk**: Android app (added a few minutes after the other files). Open it on the phone to install.
             **HTMLtoVideo.exe**: Windows desktop app. Open an HTML file, render it to MP4, watch it in the player, ⬇ save to a folder. Needs Chrome or Edge. Unsigned: if Windows warns, click *More info → Run anyway*.
             **HTMLtoVideo-Plugin.zip**: Premiere Pro / After Effects plugin (every object on its own track/layer, editable keyframes). Unzip, run `scripts/install-win.bat` or `scripts/install-mac.sh`.
             **html-to-video.zip**: Claude skill for writing HTML animations that convert cleanly.
