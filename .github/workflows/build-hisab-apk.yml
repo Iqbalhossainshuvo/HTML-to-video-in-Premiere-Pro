@@ -1,0 +1,62 @@
+name: Build Hisab Khata (Android)
+
+on:
+  push:
+    branches: [main, 'claude/**', 'ccr-**']
+    paths: ['hisab-app/**', '.github/workflows/build-hisab-apk.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hisab-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: hisab-app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install
+        run: npm ci
+
+      - name: Check (tests, types, lint)
+        run: |
+          npm test
+          npx tsc --noEmit
+          npx expo lint
+
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install
+        env:
+          CI: 1
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+
+      - name: Signing certificate (SHA-1 for the Google Cloud Android OAuth client)
+        run: keytool -list -v -keystore android/app/debug.keystore -storepass android -alias androiddebugkey | grep -E 'SHA1|SHA256'
+
+      - name: Build APK
+        working-directory: hisab-app/android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+        env:
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+
+      - name: Rename
+        run: cp android/app/build/outputs/apk/release/app-release.apk ../HisabKhata-Android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HisabKhata-android
+          path: HisabKhata-Android.apk
